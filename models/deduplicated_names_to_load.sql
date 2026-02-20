@@ -24,7 +24,7 @@ SELECT
   first_event_date,
   mr_event_date
 
-FROM actionbuilder_sync.master_load_qualifiers mlq
+FROM {{ ref('master_load_qualifiers') }} mlq
 LEFT JOIN actionnetwork_views.states s ON (
   mlq.state = s.name OR mlq.state = s.abbreviation
 )

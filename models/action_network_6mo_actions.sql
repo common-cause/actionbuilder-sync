@@ -21,7 +21,7 @@ WITH action_network_data AS (
     user_created_at,
     user_updated_at
     
-  FROM actionbuilder_sync.action_network_actions
+  FROM {{ ref('action_network_actions') }}
   WHERE email IS NOT NULL
     AND actions_6_months IS NOT NULL
 )

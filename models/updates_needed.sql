@@ -22,7 +22,7 @@ WITH correct_values AS (
     state_actions_6mo_sync_string,
     top_state_action_taker_sync_string,
     phone_calls_sync_string
-  FROM actionbuilder_sync.correct_participation_values
+  FROM {{ ref('correct_participation_values') }}
   WHERE has_participation_data = TRUE  -- Only entities with actual participation data
 ),
 
@@ -34,7 +34,7 @@ current_ab_values AS (
     tag_name,
     current_value,
     removal_string
-  FROM actionbuilder_sync.current_tag_values
+  FROM {{ ref('current_tag_values') }}
   WHERE tag_name IN (
     'Events Attended Past 6 Months',
     'Most Recent Event Attended',

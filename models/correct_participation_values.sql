@@ -69,7 +69,7 @@ scaletowin_calls_by_entity AS (
     aep.entity_id,
     SUM(scd.phone_bank_calls_made) as total_phone_bank_calls_made
   FROM all_entity_phones aep
-  INNER JOIN actionbuilder_sync.scaletowin_call_data scd
+  INNER JOIN {{ ref('scaletowin_call_data') }} scd
     ON aep.number_normalized = scd.caller_phone_number
   GROUP BY aep.entity_id
 ),
@@ -99,7 +99,7 @@ mobilize_events_by_entity AS (
     MAX(med.most_recent_event_attended) as most_recent_event_attended,
     MIN(med.first_event_attended) as first_event_attended
   FROM all_entity_emails aee
-  INNER JOIN actionbuilder_sync.mobilize_event_data med
+  INNER JOIN {{ ref('mobilize_event_data') }} med
     ON aee.email_normalized = LOWER(TRIM(med.user_email))
   GROUP BY aee.entity_id
 ),
@@ -110,7 +110,7 @@ action_network_actions_by_entity AS (
     aee.entity_id,
     SUM(an6.total_actions_6_months) as total_action_network_actions_6mo
   FROM all_entity_emails aee
-  INNER JOIN actionbuilder_sync.action_network_6mo_actions an6
+  INNER JOIN {{ ref('action_network_6mo_actions') }} an6
     ON aee.email_normalized = an6.email_normalized
   GROUP BY aee.entity_id
 ),
@@ -122,7 +122,7 @@ state_action_network_by_entity AS (
     MAX(satp.state_actions_6_months) as state_actions_6_months,
     MAX(CASE WHEN satp.top_state_action_taker = TRUE THEN 1 ELSE 0 END) as top_state_action_taker
   FROM all_entity_emails aee
-  INNER JOIN actionbuilder_sync.state_action_network_top_performers satp
+  INNER JOIN {{ ref('state_action_network_top_performers') }} satp
     ON aee.email_normalized = satp.email_normalized
   GROUP BY aee.entity_id
 ),

@@ -64,7 +64,7 @@ scaletowin_qualifiers AS (
     'ScaleToWin Phone Bank' as qualification_reason,
     CAST(NULL AS STRING) as email_normalized,
     scd.caller_phone_number as phone_normalized
-  FROM actionbuilder_sync.scaletowin_call_data scd
+  FROM {{ ref('scaletowin_call_data') }} scd
   WHERE scd.phone_bank_calls_made > 0
     AND scd.caller_phone_number IS NOT NULL
 ),
@@ -87,7 +87,7 @@ action_network_qualifiers AS (
     'Action Network 5+ Actions' as qualification_reason,
     LOWER(TRIM(REGEXP_REPLACE(u.email, r'^"(.*)"$', r'\1'))) as email_normalized,
     REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(cf.phone_number, ''), r'^\+', ''), r'^1', ''), r'[^\d]', '') as phone_normalized
-  FROM actionbuilder_sync.action_network_6mo_actions an6
+  FROM {{ ref('action_network_6mo_actions') }} an6
   INNER JOIN actionnetwork_cleaned.cln_actionnetwork__users u
     ON an6.user_id = u.id
   LEFT JOIN actionnetwork_cleaned.cln_actionnetwork__core_fields cf
@@ -252,7 +252,7 @@ final_with_action_network AS (
   FROM person_unified_contacts uc
   LEFT JOIN core_enhanced.enh_activistpools__emails epe
     ON uc.person_id = epe.person_id
-  LEFT JOIN actionbuilder_sync.action_network_6mo_actions an6
+  LEFT JOIN {{ ref('action_network_6mo_actions') }} an6
     ON LOWER(TRIM(epe.email)) = an6.email_normalized
   GROUP BY uc.person_id, uc.first_name, uc.last_name, uc.phone_number, uc.email, 
            uc.state, uc.county, uc.zip_code, uc.source_code, uc.created_at,
@@ -282,7 +282,7 @@ final_with_action_network AS (
     COALESCE(an6.total_actions_6_months, 0) as action_network_actions
     
   FROM unmatched_contacts um
-  LEFT JOIN actionbuilder_sync.action_network_6mo_actions an6
+  LEFT JOIN {{ ref('action_network_6mo_actions') }} an6
     ON LOWER(TRIM(um.email)) = an6.email_normalized
 ),
 
