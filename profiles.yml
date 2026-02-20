@@ -1,0 +1,12 @@
+actionbuilder_sync:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: service-account
+      project: proj-tmc-mem-com
+      dataset: actionbuilder_sync
+      keyfile: "{{ env_var('BIGQUERY_KEYFILE_PATH') }}"
+      threads: 4
+      timeout_seconds: 300
+      location: US
