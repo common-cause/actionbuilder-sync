@@ -10,8 +10,8 @@ Reads participation records from Mobilize, Action Network, and ScaleToWin, compu
 
 **Current state:**
 - Updating tag values on existing records — active and running
-- New record insertion — built but not yet active; pending deduplication cleanup
-- Deduplication — `dedup_candidates` view is built and ready; deletions via API not yet executed
+- Deduplication — contact migration views built; deletion execution pending sync script docs from TMC consultant
+- New record insertion — built and fully guarded; ready to activate after dedup execution
 
 ---
 
@@ -54,7 +54,7 @@ Should report all checks passing.
 ## Running dbt
 
 ```bash
-# Deploy all 13 views to BigQuery
+# Deploy all 15 views to BigQuery
 bash dbt.sh run
 
 # Deploy a single model
@@ -91,11 +91,13 @@ ActionBuilder Sync/
 │   ├── updates_needed.sql                 # Sync job input — rows to change
 │   │
 │   │   ── Deduplication ──
-│   ├── dedup_candidates.sql               # Entities to delete from AB (run before new inserts)
+│   ├── dedup_candidates.sql               # Entities to delete from AB
+│   ├── email_migration_needed.sql         # Emails to copy to keeper entities before deletion
+│   ├── phone_migration_needed.sql         # Phones to copy to keeper entities before deletion
 │   │
 │   │   ── New record insertion (not yet active) ──
 │   ├── master_load_qualifiers.sql         # People who qualify for AB entry
-│   ├── deduplicated_names_to_load.sql     # Final new-record insertion feed
+│   ├── deduplicated_names_to_load.sql     # Final new-record insertion feed (AB-guarded)
 │   │
 │   │   ── Diagnostics ──
 │   ├── identity_resolution.sql            # Entity → person_id mapping with data-source flags
@@ -164,7 +166,12 @@ ActionBuilder DB ──► (actionbuilder_cleaned.*) ──► current_tag_value
 
 1. **[Done]** Manage views as code via dbt (replaced BQ GUI)
 2. **[Done]** Tag removal — sync now replaces values rather than accumulating them
-3. **[Done]** `dedup_candidates` view — identifies 374 entities to delete
-4. **[Next]** Execute deduplication — delete candidates via AB API, verify sync recovers
-5. **[Next]** Enable new record insertion via `deduplicated_names_to_load`
-6. **[Future]** New data flows: Airtable, Zoom, Mobilize relational organizing campaign
+3. **[Done]** `dedup_candidates` — identifies 374 AB entities to delete
+4. **[Done]** `email_migration_needed` / `phone_migration_needed` — contact info to consolidate onto keeper entities before deletion (91 emails, 93 phones)
+5. **[Done]** `deduplicated_names_to_load` — 35,926 new records, fully guarded against re-creating existing entities (by person_id, email, phone) and internally deduplicated (gmail normalization + name+phone matching)
+6. **[Next]** Execute dedup sequence via sync script once TMC consultant provides operation column formats:
+   - `email_migration_needed` → `prepare_email_data`
+   - `phone_migration_needed` → `prepare_phone_data`
+   - `dedup_candidates` → `remove_records`
+   - `deduplicated_names_to_load` → `insert_new_records`
+7. **[Future]** New data flows: Airtable, Zoom, Mobilize relational organizing campaign

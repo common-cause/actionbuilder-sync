@@ -10,12 +10,32 @@ This project calculates participation values for people in ActionBuilder from ex
 
 ## The Sync Job
 
-The sync job is a custom script written by a Movement Cooperative consultant. It reads a BigQuery view and makes API calls to ActionBuilder. Key characteristics:
+The sync job is a custom script written by a Movement Cooperative consultant. It is a proprietary wrapper on top of the [Parsons ActionBuilder library](https://github.com/move-coop/parsons/blob/main/parsons/action_builder/action_builder.py). It reads a BigQuery view and makes API calls to ActionBuilder. Key characteristics:
 
-- **Input:** A BigQuery table/view with one row per entity (or per field update) in a specific wide-column format
+- **Input:** A BigQuery table/view pointed at by configuration, plus an operation name
 - **Authentication:** ActionBuilder OSDI API token
 - **Rate limit:** 4 calls/second, no batch endpoint
-- **No public documentation** — behavior documented here from consultant emails
+- **Documentation:** Full README and column format specs requested from TMC consultant (pending as of Feb 2026)
+
+### Known Operations
+
+The script supports at minimum these operation modes (exact input column names pending confirmation):
+
+| Operation | Purpose |
+|---|---|
+| `update_records` | Update tag values on existing entities — **currently in use** |
+| `insert_new_records` | Create new entity records |
+| `upsert_records` | Create or update |
+| `remove_records` | Remove/deactivate entities |
+| `prepare_email_data` | Add secondary email addresses to existing entities |
+| `prepare_phone_data` | Add secondary phone numbers to existing entities |
+| `prepare_address_data` | Add/update postal addresses |
+| `get_entity_ids_using_email` | Look up entity IDs by email (likely a pre-step for other operations) |
+| `get_entity_ids_using_tags` | Look up entity IDs by tag |
+| `connect_records` | Create connections between entities |
+| `deactivate_connections` | Deactivate existing connections |
+
+> **Open question:** Does `remove_records` hard-delete entities or only deactivate campaign membership? The underlying Parsons method (`remove_entity_record_from_campaign`) suggests the latter. Confirm with consultant before executing dedup deletions.
 
 ### Output Table Format (`updates_needed`)
 
@@ -104,8 +124,11 @@ The sync job's input table. Compares correct vs. current values, filters to only
 #### `identity_resolution`
 Maps ActionBuilder entities to `person_id`s in the `core_enhanced` hub via primary email and phone. Currently has `person_id` commented out of the output due to the unresolved duplicate problem (see below). Used for diagnostic purposes.
 
+#### `email_migration_needed` + `phone_migration_needed`
+Pre-deletion contact migration feeds. For each duplicate pair in `dedup_candidates`, identifies emails/phones on the entity to be deleted that are not yet on the keeper entity. Must be run (via `prepare_email_data` / `prepare_phone_data`) before executing deletions to ensure participation data is preserved.
+
 #### `master_load_qualifiers` + `deduplicated_names_to_load`
-Infrastructure for new record insertion. Identifies people from external platforms who qualify to be added to ActionBuilder but don't yet have a record. **Not currently active.** Qualification sources: EP shifts (2024), Mobilize events (past year), ScaleToWin phone bank, Action Network (20+ actions in 6 months).
+New record insertion infrastructure. Identifies people from external platforms who qualify to be added to ActionBuilder but don't yet have a record. `deduplicated_names_to_load` applies full AB exclusion and within-feed dedup. **Not currently active** — blocked on dedup execution. As of Feb 2026: 35,926 genuinely new records ready to insert.
 
 ---
 
@@ -128,28 +151,42 @@ Infrastructure for new record insertion. Identifies people from external platfor
 ### 1. Tag removal — IMPLEMENTED ✓
 `current_tag_values` exposes `removal_string = CONCAT(tag_interact_id, ':|:', taggable_logbook_interact_id)`. The `updates_needed` view passes these into `*_tag_remove` columns. Update Value rows include the removal IDs; New Value rows have NULL. The sync replaces values rather than accumulating them.
 
-### 2. Duplicate AB entities — `dedup_candidates` VIEW BUILT, DELETIONS PENDING
+### 2. Duplicate AB entities — VIEWS COMPLETE, EXECUTION PENDING SYNC SCRIPT DOCS
 
 **Scale (Feb 2026, verified against live BQ):**
 - 23,116 total entities; 99.8% matched to a voter-file `person_id`
 - 475 `person_id`s map to 2+ AB entities
 - `dedup_candidates` view identifies **374 entities to delete** (341 via person_id match, 33 test accounts)
 
-**Root cause:** Pipeline run multiple times, each run creates new AB records rather than matching to existing ones. Sept 8, 2025 (13,453 entities), June 3, 2025 (5,354), Apr 18, 2025 (550) are the major import dates; each created hundreds of duplicates.
+**Root cause:** Pipeline run multiple times, each run creates new AB records rather than matching to existing ones. See [docs/deduplication.md](deduplication.md) for full analysis.
 
-**Current state:**
-- `models/dedup_candidates.sql` is deployed and tested
-- Deletions via the ActionBuilder API have NOT yet been executed
-- See [docs/deduplication.md](deduplication.md) for the full workflow
+**Current state — all views built and deployed:**
+- `email_migration_needed` — 91 emails to migrate to keeper entities (`prepare_email_data`)
+- `phone_migration_needed` — 93 phones to migrate to keeper entities (`prepare_phone_data`)
+- `dedup_candidates` — 374 entities to delete (`remove_records`)
+- Execution blocked pending TMC consultant confirmation of sync script column formats for these operations
+
+**Execution order (once column formats confirmed):**
+1. `email_migration_needed` → sync (`prepare_email_data`)
+2. `phone_migration_needed` → sync (`prepare_phone_data`)
+3. `dedup_candidates` → sync (`remove_records`)
+4. `deduplicated_names_to_load` → sync (`insert_new_records`)
 
 **Why `identity_resolution` has `person_id` commented out:**
 Was commented out due to the duplicate problem. Can be restored once dedup is complete.
 
-### 3. Only updating existing records
-New record creation is turned off. The path to turning it on is:
-1. Solve or accept the duplicate problem
-2. The `deduplicated_names_to_load` view is already built as the candidate new-record input
-3. The sync job presumably supports a creation mode — needs confirmation of the exact table format expected
+### 3. New record insertion — BUILT AND GUARDED, NOT YET ACTIVE
+
+`deduplicated_names_to_load` is the insertion feed. As of Feb 2026: **35,926 rows**, all genuinely new.
+
+**Guards in place:**
+- AB exclusion by person_id (covers all identity-hub-linked emails including migrated secondaries)
+- AB exclusion by direct email match
+- AB exclusion by phone (phone-only records)
+- Test account filter (gmail plus-aliases)
+- Within-feed dedup: gmail canonical normalization (Pass A) + name+phone matching (Pass B)
+
+Activation blocked on executing the dedup sequence above first.
 
 ---
 

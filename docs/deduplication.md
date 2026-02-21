@@ -74,6 +74,27 @@ These are the highest-impact duplicate groups, confirmed in the research data:
 
 ---
 
+## Contact Migration — Before Deletion
+
+Before deleting duplicate entities, their email addresses and phone numbers must be migrated to the keeper entities. This ensures:
+
+1. **Participation data is preserved** — `correct_participation_values` joins directly from `cln_actionbuilder__emails` and `cln_actionbuilder__phone_numbers` to external platform data. Once a delete entity's emails/phones are on the keeper entity, all activity associated with those contacts is correctly attributed to the keeper.
+2. **Future dedup prevention** — the keeper entity's expanded contact set ensures the identity-hub-based exclusion in `deduplicated_names_to_load` correctly blocks re-creation of these people.
+
+### `email_migration_needed` (Feb 2026: 91 emails → 87 keeper entities)
+
+Collects all emails from each entity in `dedup_candidates` (not just the primary — every verified/user_added email), excludes any already present on the keeper entity, and outputs one row per email to transfer.
+
+Run via sync script: `prepare_email_data` operation.
+
+### `phone_migration_needed` (Feb 2026: 93 phones → 89 keeper entities)
+
+Identical logic for phone numbers. Only includes valid 10-digit numbers.
+
+Run via sync script: `prepare_phone_data` operation.
+
+---
+
 ## Deletion Workflow
 
 ### Step 1: Review the view output
@@ -84,32 +105,47 @@ ORDER BY group_size DESC, delete_last_name
 LIMIT 50;
 ```
 
-Spot-check: confirm `keep_interact_id` points to the right record and `delete_interact_id` points to the obvious duplicate.
+Spot-check: confirm `keep_interact_id` points to the right record and `delete_interact_id` points to the obvious duplicate. Pay special attention to rows where `keep_interact_id IS NULL` (test_account tier — delete with no redirect).
 
-### Step 2: Delete via ActionBuilder API
+### Step 2: Migrate contact info
 
-Use the AB OSDI API to delete each entity in `delete_interact_id`. The API endpoint is:
+Run `email_migration_needed` through the sync script using `prepare_email_data`, then `phone_migration_needed` using `prepare_phone_data`. Confirm a sample of keeper entities now show the additional emails/phones before proceeding.
 
-```
-DELETE /api/v1/campaigns/{campaign_id}/people/{interact_id}
-```
+### Step 3: Delete via sync script
 
-A script needs to be written to iterate over `dedup_candidates` and call the API for each `delete_interact_id`. **Do not delete entities where `keep_interact_id` is NULL without confirming they are test accounts** — spot check a few rows first.
+Run `dedup_candidates` through the sync script using `remove_records`.
 
-### Step 3: Verify sync recovery
+> **Note:** The TMC sync script's `remove_records` operation may remove entities from campaign membership rather than hard-deleting them. Confirm with the consultant whether this achieves a true deletion or just deactivation. If only deactivation, the AB OSDI API `DELETE /api/v1/campaigns/{campaign_id}/people/{interact_id}` endpoint may be needed instead.
 
-After deletion, run `bash dbt.sh run` to refresh all views, then confirm that `updates_needed` no longer references the deleted entities. The `current_tag_values` view reads from live AB data, so it will naturally drop the deleted records.
+### Step 4: Verify sync recovery
 
-### Step 4: Fix the pipeline
-
-Before running any future batch inserts (`deduplicated_names_to_load`), add a guard to `master_load_qualifiers` or `deduplicated_names_to_load` that excludes anyone whose email or person_id already exists in AB. This prevents the next import from recreating duplicates.
+Run `bash dbt.sh run` to refresh all views, then confirm `updates_needed` no longer references the deleted entities. The `current_tag_values` view reads from live AB data, so it will naturally drop deleted records.
 
 ### Step 5: Enable new record insertion
 
-Once dedup is clean and the guard is in place, enable new record insertion. As of Feb 2026:
-- `deduplicated_names_to_load` has ~50,564 rows
-- ~36,662 are genuinely new (not yet in AB by email)
-- ~13,963 already exist in AB (will be filtered by the guard)
+`deduplicated_names_to_load` is ready and fully guarded. As of Feb 2026 (post-migration counts):
+
+- **35,926 rows** — genuinely new people not in AB
+- Filtered by: person_id (covers all identity-hub-linked emails including migrated secondaries), direct email match, phone-only phone match
+- Further deduplicated within the feed: gmail canonical normalization (Pass A) collapsed email variants; name+phone matching (Pass B) collapsed 195 additional records where the same person appeared under different email addresses
+
+Run via sync script: `insert_new_records` operation.
+
+---
+
+## How `deduplicated_names_to_load` Prevents Future Duplicates
+
+After the dedup execution, re-running the sync will not recreate duplicates because:
+
+1. **Person_id exclusion** — for anyone with a `core_enhanced` person_id, we check whether that person_id is linked to any current AB entity (via the identity hub across all emails, including newly migrated secondaries). If so, excluded.
+
+2. **Direct email exclusion** — for unmatched records (no person_id), their email must not already appear in `cln_actionbuilder__emails`.
+
+3. **Phone-only exclusion** — for records with no email, their phone must not already appear in `cln_actionbuilder__phone_numbers`.
+
+4. **Test account exclusion** — gmail plus-aliases are filtered from the incoming feed.
+
+5. **Within-feed dedup** — gmail canonical normalization and name+phone matching prevent a single person from generating multiple new-record rows.
 
 ---
 

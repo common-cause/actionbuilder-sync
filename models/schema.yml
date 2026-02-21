@@ -270,18 +270,107 @@ models:
       - name: qualification_count
         description: Number of distinct qualification sources for this person.
 
+  - name: phone_migration_needed
+    description: >
+      Secondary phone numbers to add to keeper entities before executing dedup deletions.
+      One row per phone number to migrate. Mirrors email_migration_needed exactly.
+
+      For each (delete, keep) pair in dedup_candidates (person_id_match and
+      name_email_match tiers only), collects ALL phone numbers from the delete
+      entity and excludes any already present on the keeper entity.
+
+      Run alongside email_migration_needed via the sync script (prepare_phone_data)
+      BEFORE executing remove_records deletions. After migration, the keeper entity's
+      consolidated phone set ensures correct_participation_values continues to aggregate
+      ScaleToWin call data across all phone numbers.
+    columns:
+      - name: entity_id
+        description: >
+          The 36-char interact_id of the keeper entity that will receive the
+          new secondary phone number.
+        tests:
+          - not_null
+      - name: delete_interact_id
+        description: Audit trail — the entity being deleted that held this phone number.
+        tests:
+          - not_null
+      - name: dedup_tier
+        description: Which dedup_candidates tier identified this pair.
+      - name: phone_to_add
+        description: >
+          The phone number string as stored in AB (including country code prefix if
+          present). Pass this directly to the API.
+        tests:
+          - not_null
+      - name: phone_norm
+        description: Normalized 10-digit form of the phone number. Exposed for debugging.
+
+  - name: email_migration_needed
+    description: >
+      Secondary emails to add to keeper entities before executing dedup deletions.
+      One row per email to migrate.
+
+      For each (delete, keep) pair in dedup_candidates (person_id_match and
+      name_email_match tiers only — test_account tier has no keeper), collects
+      ALL emails from the delete entity and excludes any already present on the
+      keeper entity. The remaining emails should be added to the keeper as
+      secondary contact addresses.
+
+      Run this view through the sync script using prepare_email_data BEFORE
+      executing remove_records deletions. After migration, the keeper entity's
+      consolidated email set ensures correct_participation_values continues to
+      aggregate participation data across all contact addresses.
+    columns:
+      - name: entity_id
+        description: >
+          The 36-char interact_id of the keeper entity that will receive the
+          new secondary email. This is the entity to target in the API call.
+        tests:
+          - not_null
+      - name: delete_interact_id
+        description: >
+          Audit trail — the interact_id of the entity being deleted, from which
+          this email originates. Useful for spot-checking and rollback.
+        tests:
+          - not_null
+      - name: dedup_tier
+        description: Which dedup_candidates tier identified this pair (person_id_match or name_email_match).
+      - name: email_to_add
+        description: The email address to add as a secondary email on the keeper entity.
+        tests:
+          - not_null
+      - name: email_norm
+        description: Lowercased, trimmed version of email_to_add. Exposed for debugging.
+
   - name: deduplicated_names_to_load
     description: >
       Final new-record insertion feed. Filters master_load_qualifiers to
-      records with a valid US state, deduplicates by name+contact info,
-      and outputs one row per person to insert into ActionBuilder.
+      records with a valid US state and applies three layers of deduplication:
 
-      NOT YET ACTIVE. Blocked until dedup_candidates deletions are executed.
-      As of Feb 2026: ~50,564 rows; ~36,662 are genuinely new (not yet in AB
-      by email match).
+      Layer 1 — AB exclusion: removes people already in ActionBuilder,
+        checking by person_id (covers all identity-hub-linked emails),
+        direct email match, and phone for phone-only records. Designed to
+        run after email_migration_needed has been applied, so keeper entities'
+        email sets include migrated secondary emails.
 
-      The sync script presumably has a creation mode that reads this table —
-      exact format requirements need confirmation from TMC consultant.
+      Layer 2 — Test account exclusion: strips gmail plus-alias emails from
+        the incoming feed (same logic as dedup_candidates).
+
+      Layer 3 — Within-feed dedup by canonical email: catches duplicates that
+        person_id grouping cannot resolve. Gmail addresses are normalized
+        (dots removed, plus-alias stripped) before grouping; non-gmail addresses
+        have plus-aliases stripped. For each canonical email group, keeps the
+        row with the most qualification sources.
+
+      NOT YET ACTIVE. Blocked until dedup_candidates deletions are executed
+      and email_migration_needed + phone_migration_needed have been applied to
+      keeper entities.
+
+      Order of operations:
+        1. email_migration_needed -> sync (prepare_email_data)
+        2. phone_migration_needed -> sync (prepare_phone_data)
+        3. dedup_candidates deletions -> sync (remove_records)
+        4. This view -> sync (insert_new_records)
     columns:
       - name: first_name
         description: >
