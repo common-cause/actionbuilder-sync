@@ -1,0 +1,353 @@
+version: 2
+
+models:
+
+  # ── Source / Staging ────────────────────────────────────────────────────────
+
+  - name: action_network_actions
+    description: >
+      Raw Action Network actions joined to user records. One row per action
+      (petition signature, event attendance, email click, etc.) with the
+      user's email address attached. Input to action_network_6mo_actions.
+    columns:
+      - name: user_id
+        description: Action Network internal user ID.
+      - name: email
+        description: User's email address (raw from cln_actionnetwork__users).
+      - name: action_date
+        description: Date the action was taken.
+      - name: action_type
+        description: Type of action (e.g. form, event, email).
+
+  - name: action_network_6mo_actions
+    description: >
+      Action Network action counts aggregated by email address, filtered to
+      the past 6 months. Used by correct_participation_values and
+      master_load_qualifiers to determine Action Network engagement.
+    columns:
+      - name: email_normalized
+        description: Lowercased, trimmed email address — the join key to ActionBuilder entities.
+        tests:
+          - not_null
+          - unique:
+              config:
+                severity: warn  # 2 known edge cases where the same email maps to multiple AN accounts
+      - name: total_actions_6_months
+        description: Total actions taken in the past 6 months across all action types.
+        tests:
+          - not_null
+
+  - name: mobilize_event_data
+    description: >
+      Mobilize event attendance aggregated by user email. Counts events attended
+      in the past 6 months and records first/most-recent event dates. One row
+      per unique email address.
+    columns:
+      - name: user_email
+        description: User's email address — join key to ActionBuilder entities.
+        tests:
+          - not_null
+          - unique
+      - name: events_attended_past_6_months
+        description: Count of Mobilize events attended in the past 6 months (attended = True only).
+      - name: first_event_attended
+        description: Date of the user's first ever Mobilize event attendance.
+      - name: most_recent_event_attended
+        description: Date of the user's most recent Mobilize event attendance.
+
+  - name: scaletowin_call_data
+    description: >
+      ScaleToWin phone bank calls aggregated by caller phone number. One row per
+      unique 10-digit caller phone number. Used to populate the "Phone Bank Calls
+      Made" field in ActionBuilder.
+    columns:
+      - name: caller_phone_number
+        description: >
+          Normalized 10-digit caller phone number (leading +1 and non-digits stripped).
+          Join key to ActionBuilder entities via phone number.
+        tests:
+          - not_null
+          - unique
+      - name: phone_bank_calls_made
+        description: Total calls made by this caller across all ScaleToWin sessions.
+
+  - name: state_action_network_top_performers
+    description: >
+      Action Network state-level actions aggregated by email, identifying
+      top state action takers for the "Action Network State Actions" and
+      "Top State Action Taker" fields in ActionBuilder.
+    columns:
+      - name: email_normalized
+        description: Lowercased, trimmed email address — join key.
+        tests:
+          - not_null
+          - unique
+      - name: state_actions_6_months
+        description: Count of state-targeted AN actions in the past 6 months.
+      - name: top_state_action_taker
+        description: >
+          Boolean flag — TRUE if this person is among the top state action takers.
+          When TRUE, triggers the "Top State Action Taker" standard tag in AB.
+
+  # ── Core Sync Pipeline ───────────────────────────────────────────────────────
+
+  - name: correct_participation_values
+    description: >
+      The "what SHOULD be in ActionBuilder" view. Joins every AB entity to all
+      external platform data via ALL email addresses and phone numbers (not just
+      primary), aggregates counts and dates, and outputs formatted sync strings
+      ready for comparison against current_tag_values.
+
+      One row per ActionBuilder entity. Entity matching uses
+      core_enhanced.enh_activistpools__emails and _phones as the linking hub.
+    columns:
+      - name: entity_id
+        description: ActionBuilder internal numeric entity ID.
+        tests:
+          - not_null
+          - unique
+      - name: full_name
+        description: CONCAT(first_name, ' ', last_name) for display.
+      - name: primary_email
+        description: The entity's highest-ranked email address.
+      - name: primary_phone
+        description: The entity's highest-ranked phone number (normalized 10-digit).
+      - name: events_attended_past_6_months
+        description: Total Mobilize events attended in past 6 months across all entity emails.
+      - name: action_network_actions_6mo
+        description: Total AN actions in past 6 months across all entity emails.
+      - name: phone_bank_calls_made
+        description: Total ScaleToWin calls made across all entity phone numbers.
+      - name: events_6mo_sync_string
+        description: Fully formatted sync string for "Events Attended Past 6 Months".
+      - name: action_network_6mo_sync_string
+        description: Fully formatted sync string for "Action Network Actions".
+      - name: phone_calls_sync_string
+        description: Fully formatted sync string for "Phone Bank Calls Made".
+
+  - name: current_tag_values
+    description: >
+      The "what IS currently in ActionBuilder" view. Reads from
+      cln_actionbuilder__taggable_logbook and returns the most recently applied,
+      non-deleted tag for each entity+tag combination.
+
+      One row per entity per tag. Exposes removal_string, which the sync job
+      uses to delete the existing value before writing a new one.
+    columns:
+      - name: entity_id
+        description: ActionBuilder internal numeric entity ID.
+        tests:
+          - not_null
+      - name: tag_name
+        description: The name of the tag (e.g. "Events Attended Past 6 Months").
+      - name: current_value
+        description: >
+          The current value of the tag. For Standard tags, returns 'applied'.
+          For value-bearing tags (number, date), returns the actual value string.
+      - name: taggable_logbook_interact_id
+        description: >
+          The 36-char UUID from cln_actionbuilder__taggable_logbook for this
+          specific tag application. Used in removal_string.
+        tests:
+          - unique
+      - name: removal_string
+        description: >
+          Pre-built removal string in the format required by the sync job:
+          "tag-interact-id:|:taggable-logbook-interact-id".
+          Pass this into a *_tag_remove column to delete this tag value.
+        tests:
+          - not_null
+
+  - name: updates_needed
+    description: >
+      The sync job's input table. Compares correct_participation_values against
+      current_tag_values for each entity and outputs only rows where a value
+      needs to be changed. One row per entity per field requiring an update.
+
+      Column naming follows the sync script's expected format:
+        *_tag columns contain the new sync string value to write.
+        *_tag_remove columns contain the removal_string for the existing value
+          (NULL for new values with no existing tag to remove first).
+
+      The entity_id column uses the 36-char interact_id UUID, not the numeric id.
+    columns:
+      - name: entity_id
+        description: >
+          The 36-char interact_id UUID of the ActionBuilder entity to update.
+          This is what the sync script uses to identify the entity — NOT the
+          short numeric id.
+        tests:
+          - not_null
+
+  # ── Deduplication ────────────────────────────────────────────────────────────
+
+  - name: dedup_candidates
+    description: >
+      Identifies ActionBuilder entities that are duplicates and should be deleted
+      via the ActionBuilder API. One row per entity to delete.
+
+      Three tiers:
+        person_id_match  -- Two entities resolve to the same core_enhanced
+                           person_id via email. Keep the entity with the most tags
+                           (tiebreak: oldest). Covers ~341 deletions.
+        name_email_match -- Same first+last+email, no person_id match.
+                           Fallback for the small number of unmatched entities.
+        test_account     -- Gmail plus-alias accounts (foo+bar@gmail.com).
+                           Delete outright with no replacement. ~33 entities.
+
+      IMPORTANT: When keep_interact_id IS NULL (test_account tier), delete the
+      entity with no redirect. When keep_interact_id is populated, ensure any
+      references (e.g. in the sync job) use keep_interact_id going forward.
+
+      Total: ~374 entities to delete (as of Feb 2026).
+    columns:
+      - name: delete_interact_id
+        description: >
+          The 36-char interact_id of the entity to DELETE from ActionBuilder.
+          Each value appears exactly once — no entity is listed for deletion twice.
+        tests:
+          - not_null
+          - unique
+      - name: keep_interact_id
+        description: >
+          The 36-char interact_id of the canonical entity to KEEP.
+          NULL for test_account tier (delete with no replacement).
+      - name: dedup_tier
+        description: Which dedup logic identified this pair.
+        tests:
+          - accepted_values:
+              values: ['person_id_match', 'name_email_match', 'test_account']
+      - name: delete_reason
+        description: Human-readable explanation of why this entity is being deleted.
+      - name: delete_tag_count
+        description: Number of tags on the entity being deleted. Zero is fine to delete.
+      - name: keep_tag_count
+        description: Number of tags on the entity being kept. NULL for test_account tier.
+      - name: delete_created_date
+        description: Date the entity to delete was created in ActionBuilder.
+      - name: keep_created_date
+        description: Date the canonical entity was created. NULL for test_account tier.
+      - name: group_size
+        description: Total number of entities (keep + delete) in this duplicate group.
+
+  # ── New Record Insertion (not yet active) ────────────────────────────────────
+
+  - name: master_load_qualifiers
+    description: >
+      People across all source platforms who meet the criteria to be added to
+      ActionBuilder. Deduplicates across sources using person_id from
+      core_enhanced as the primary key, falls back to raw contact info for
+      unmatched individuals.
+
+      NOT YET ACTIVE. Currently blocked pending deduplication cleanup.
+      Once dedup_candidates deletions are executed and confirmed, this view
+      feeds into deduplicated_names_to_load for new record insertion.
+
+      Qualification sources:
+        - EP shifts in 2024
+        - Mobilize events attended in past 12 months
+        - ScaleToWin phone bank participation
+        - Action Network (20+ actions in past 6 months)
+    columns:
+      - name: person_id
+        description: >
+          core_enhanced person_id if matched; NULL for ~334 unmatched records.
+          Used to deduplicate across qualification sources.
+      - name: first_name
+        description: Best available first name (EP data preferred, then voter file fallback).
+      - name: last_name
+        description: Best available last name.
+      - name: email
+        description: Best available email address.
+      - name: phone_number
+        description: Best available phone number.
+      - name: state
+        description: Two-letter state abbreviation.
+      - name: qualification_reasons
+        description: >
+          Comma-separated list of which sources qualify this person
+          (e.g. "EP Shift 2024, Mobilize Event Past Year").
+      - name: qualification_count
+        description: Number of distinct qualification sources for this person.
+
+  - name: deduplicated_names_to_load
+    description: >
+      Final new-record insertion feed. Filters master_load_qualifiers to
+      records with a valid US state, deduplicates by name+contact info,
+      and outputs one row per person to insert into ActionBuilder.
+
+      NOT YET ACTIVE. Blocked until dedup_candidates deletions are executed.
+      As of Feb 2026: ~50,564 rows; ~36,662 are genuinely new (not yet in AB
+      by email match).
+
+      The sync script presumably has a creation mode that reads this table —
+      exact format requirements need confirmation from TMC consultant.
+    columns:
+      - name: first_name
+        description: >
+          First name for the new AB entity. A small number of records (~4) have
+          null first names where voter file fallback data was unavailable.
+        tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: last_name
+        description: >
+          Last name for the new AB entity. A small number of records (~6) have
+          null last names where voter file fallback data was unavailable.
+        tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: email
+        description: Email address for the new AB entity.
+      - name: state
+        description: Two-letter state abbreviation (required; records without are excluded).
+        tests:
+          - not_null
+
+  # ── Diagnostics ──────────────────────────────────────────────────────────────
+
+  - name: entity_lookup_debug
+    description: >
+      Simple diagnostic view: one row per ActionBuilder entity with name,
+      primary email, primary phone, and timestamps. Use for spot-checking
+      specific entities or verifying contact data is correct.
+    columns:
+      - name: interact_id
+        description: The 36-char UUID interact_id — the external-facing entity identifier.
+        tests:
+          - not_null
+          - unique
+      - name: entity_id
+        description: The internal numeric entity ID.
+      - name: email
+        description: The entity's primary email address (highest-ranked by status).
+      - name: phone_number
+        description: The entity's primary phone number.
+
+  - name: identity_resolution
+    description: >
+      Maps ActionBuilder entities to person_ids in the core_enhanced identity hub
+      via primary email and phone. Also flags which external platforms (Mobilize,
+      ScaleToWin) each entity has data in.
+
+      Primarily a diagnostic/analysis view. The person_id column was
+      intentionally commented out of the SELECT due to the now-resolved
+      duplicate entity problem (see dedup_candidates).
+    columns:
+      - name: entity_id
+        description: ActionBuilder internal numeric entity ID.
+      - name: interact_id
+        description: The 36-char UUID interact_id.
+      - name: match_method
+        description: >
+          How the person_id was found: 'email', 'phone', or 'no_match'.
+      - name: has_person_id
+        description: >
+          TRUE if a core_enhanced person_id was found for this entity.
+          As of Feb 2026, 99.8% of entities match.
+      - name: has_mobilize_data
+        description: TRUE if this entity's person_id appears in Mobilize participation data.
+      - name: has_scaletowin_data
+        description: TRUE if this entity's person_id appears in ScaleToWin call data.

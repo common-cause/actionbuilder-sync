@@ -4,7 +4,7 @@
 
 This project calculates participation values for people in ActionBuilder from external platforms (Mobilize, Action Network, ScaleToWin, EP Archive) and pushes those values into ActionBuilder as tag responses via a custom sync job. It runs entirely in BigQuery as a set of dbt views.
 
-**Current status:** Updating tag values on existing records only. New record insertion is built but not yet active, pending deduplication work.
+**Current status:** Updating tag values on existing records only. New record insertion is built but not yet active — `dedup_candidates` view is ready; AB API deletions not yet executed.
 
 ---
 
@@ -68,7 +68,7 @@ Both IDs are 36-char UUIDs from ActionBuilder's own database:
 - First ID: `interact_id` from `actionbuilder_cleaned.cln_actionbuilder__tags` for that specific field
 - Second ID: `interact_id` from `actionbuilder_cleaned.cln_actionbuilder__taggable_logbook` for that specific person+field tagging
 
-**Current status:** All `*_tag_remove` columns in `updates_needed` are `NULL`. The sync is currently only adding values, not removing old ones first. This means if a number field changes from 5 to 8, it adds a second "8" entry rather than replacing the "5". This needs to be fixed before the values being synced are reliable.
+**Current status:** Tag removal is fully implemented. `current_tag_values` exposes `removal_string` for every existing tag application, and `updates_needed` passes these into `*_tag_remove` columns. The sync now replaces values rather than accumulating them.
 
 ---
 
@@ -126,30 +126,24 @@ Infrastructure for new record insertion. Identifies people from external platfor
 ## Known Issues and Open Problems
 
 ### 1. Tag removal — IMPLEMENTED ✓
-`current_tag_values` now exposes `removal_string = CONCAT(tag_interact_id, ':|:', taggable_logbook_interact_id)`. The `updates_needed` view pivots these per field into `removal_ids_*` columns and passes them through to `*_tag_remove` columns. Update Value rows (value is changing) include the removal IDs; New Value rows (first write) correctly have NULL. The sync will now replace rather than accumulate tag values.
+`current_tag_values` exposes `removal_string = CONCAT(tag_interact_id, ':|:', taggable_logbook_interact_id)`. The `updates_needed` view passes these into `*_tag_remove` columns. Update Value rows include the removal IDs; New Value rows have NULL. The sync replaces values rather than accumulating them.
 
-### 2. Duplicate AB entities (blocking new record insertion)
-The core deduplication problem: people often have multiple email addresses across platforms, and those emails may or may not be linked to the same ActionBuilder entity or the same `person_id` in `core_enhanced`.
+### 2. Duplicate AB entities — `dedup_candidates` VIEW BUILT, DELETIONS PENDING
 
-**Scale:** 802 name-groups contain 1,710 entities (nearly every entity in AB is a duplicate of at least one other). All AB content was pushed via this sync pipeline — nothing was hand-entered — so records can be deleted freely.
+**Scale (Feb 2026, verified against live BQ):**
+- 23,116 total entities; 99.8% matched to a voter-file `person_id`
+- 475 `person_id`s map to 2+ AB entities
+- `dedup_candidates` view identifies **374 entities to delete** (341 via person_id match, 33 test accounts)
 
-**Root causes identified:**
-- **Batch import bug:** records created milliseconds apart (same person submitted twice in rapid succession)
-- **Re-import without deduplication:** April 18, 2025 and June 3, 2025 are the dominant paired creation dates — an initial April import and a June re-import created double entries for the same people
+**Root cause:** Pipeline run multiple times, each run creates new AB records rather than matching to existing ones. Sept 8, 2025 (13,453 entities), June 3, 2025 (5,354), Apr 18, 2025 (550) are the major import dates; each created hundreds of duplicates.
 
-**Duplicate tiers:**
-1. **Tier 1 (213 pairs):** same name + same email address → definite duplicates; delete the newer record
-2. **Tier 2 (70 pairs):** same name + same phone, different emails → very likely duplicates; keep the older, preserve both emails
-3. **Tier 3 (~446 pairs):** same name, all different contact info → ambiguous; skip for automated cleanup, handle manually
-
-**Next steps:**
-1. Build a `dedup_candidates` dbt model outputting `(keep_interact_id, delete_interact_id)` pairs for Tier 1 and 2
-2. Spot-check candidates, then delete the losing records via ActionBuilder API
-3. Ensure `deduplicated_names_to_load` pipeline checks against remaining AB entities before inserting
-4. See `memory/deduplication.md` for suggested SQL pattern and full analysis
+**Current state:**
+- `models/dedup_candidates.sql` is deployed and tested
+- Deletions via the ActionBuilder API have NOT yet been executed
+- See [docs/deduplication.md](deduplication.md) for the full workflow
 
 **Why `identity_resolution` has `person_id` commented out:**
-Entity → person_id mapping is many-to-many in practice (person with two emails = two person_ids in core_enhanced), making it unreliable as a dedup key for new record insertion.
+Was commented out due to the duplicate problem. Can be restored once dedup is complete.
 
 ### 3. Only updating existing records
 New record creation is turned off. The path to turning it on is:
