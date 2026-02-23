@@ -8,6 +8,9 @@
 --     then by direct email match, then by phone for phone-only records.
 --     Designed to run AFTER email_migration_needed and phone_migration_needed have been
 --     applied, so keeper entities' contact sets already include migrated secondary info.
+--     Also holds out records whose voterbase_id is involved in an unresolved dedup pair
+--     (dedup_unresolved). Prevents creating a third entity while two existing ones are
+--     pending human/AI review.
 --
 --   Layer 2 — Test account exclusion: strip gmail plus-alias emails from the incoming
 --     feed (same logic as dedup_candidates). These should never be created in AB.
@@ -32,7 +35,8 @@
 --   1. Run email_migration_needed via sync script (prepare_email_data)
 --   2. Run phone_migration_needed via sync script (prepare_phone_data)
 --   3. Run dedup_candidates deletions via sync script (remove_records)
---   4. Use this view as the new-record insertion feed (insert_new_records)
+--   4. Resolve open dedup_unresolved pairs to unblock held-out records
+--   5. Use this view as the new-record insertion feed (insert_new_records)
 
 -- ============================================================
 -- Layer 1: Build AB exclusion sets
@@ -70,6 +74,40 @@ ab_person_ids AS (
   WHERE abe.owner_type = 'Entity'
     AND abe.email IS NOT NULL
     AND ep.person_id IS NOT NULL
+),
+
+-- ============================================================
+-- Hold-out: voterbase_ids involved in unresolved dedup pairs.
+-- New records that map to these voterbase_ids are withheld until
+-- the ambiguity between existing AB entities is resolved.
+-- ============================================================
+unresolved_voterbase_ids AS (
+  SELECT entity_a_voterbase_id AS voterbase_id
+  FROM {{ ref('dedup_unresolved') }}
+  WHERE entity_a_voterbase_id IS NOT NULL
+  UNION DISTINCT
+  SELECT entity_b_voterbase_id AS voterbase_id
+  FROM {{ ref('dedup_unresolved') }}
+  WHERE entity_b_voterbase_id IS NOT NULL
+),
+
+incoming_voterbase_ids AS (
+  SELECT
+    mlq.person_id,
+    eid.voterbase_id
+  FROM {{ ref('master_load_qualifiers') }} mlq
+  INNER JOIN core_targetsmart_enhanced.enh_activistpools__identities eid
+    ON mlq.person_id = eid.person_id
+  WHERE mlq.person_id IS NOT NULL
+    AND eid.voterbase_id IS NOT NULL
+    AND eid.voterbase_id != ''
+),
+
+held_out_person_ids AS (
+  SELECT DISTINCT ivb.person_id
+  FROM incoming_voterbase_ids ivb
+  INNER JOIN unresolved_voterbase_ids uvb
+    ON ivb.voterbase_id = uvb.voterbase_id
 ),
 
 -- ============================================================
@@ -135,6 +173,14 @@ base_qualified AS (
     AND NOT REGEXP_CONTAINS(
       LOWER(TRIM(COALESCE(mlq.email, ''))),
       r'^[^+]+\+[^@]+@gmail\.com$'
+    )
+
+    -- Hold out: do not create a new entity for a person whose existing
+    -- AB entities are in an unresolved dedup pair. Prevents a third entity
+    -- from being created before the ambiguity is resolved.
+    AND (
+      mlq.person_id IS NULL
+      OR mlq.person_id NOT IN (SELECT person_id FROM held_out_person_ids)
     )
 ),
 

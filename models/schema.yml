@@ -186,20 +186,26 @@ models:
       Identifies ActionBuilder entities that are duplicates and should be deleted
       via the ActionBuilder API. One row per entity to delete.
 
-      Three tiers:
-        person_id_match  -- Two entities resolve to the same core_enhanced
-                           person_id via email. Keep the entity with the most tags
-                           (tiebreak: oldest). Covers ~341 deletions.
-        name_email_match -- Same first+last+email, no person_id match.
-                           Fallback for the small number of unmatched entities.
-        test_account     -- Gmail plus-alias accounts (foo+bar@gmail.com).
-                           Delete outright with no replacement. ~33 entities.
+      Five tiers:
+        person_id_match    -- Two entities resolve to the same core_enhanced
+                             person_id via primary email. Keep the entity with
+                             the most tags (tiebreak: oldest). ~341 deletions.
+        name_email_match   -- Same first+last+email, no person_id match.
+                             Fallback for unmatched entities.
+        test_account       -- Gmail plus-alias accounts (foo+bar@gmail.com).
+                             Delete outright with no replacement. ~33 entities.
+        voterbase_id_match -- Same TargetSmart voter file ID + exact same
+                             normalized full name. Auto-deletable without review.
+                             Name-divergent voterbase pairs go to dedup_ambiguous.
+        resolved_merge     -- MERGE decisions written to dedup_resolutions by
+                             human or AI review of dedup_unresolved pairs.
 
       IMPORTANT: When keep_interact_id IS NULL (test_account tier), delete the
       entity with no redirect. When keep_interact_id is populated, ensure any
       references (e.g. in the sync job) use keep_interact_id going forward.
 
-      Total: ~374 entities to delete (as of Feb 2026).
+      Base count ~374 entities (Feb 2026); grows as voterbase_id_match and
+      resolved_merge tiers are populated via the resolution workflow.
     columns:
       - name: delete_interact_id
         description: >
@@ -216,7 +222,7 @@ models:
         description: Which dedup logic identified this pair.
         tests:
           - accepted_values:
-              values: ['person_id_match', 'name_email_match', 'test_account']
+              values: ['person_id_match', 'name_email_match', 'test_account', 'voterbase_id_match', 'resolved_merge']
       - name: delete_reason
         description: Human-readable explanation of why this entity is being deleted.
       - name: delete_tag_count
@@ -229,6 +235,72 @@ models:
         description: Date the canonical entity was created. NULL for test_account tier.
       - name: group_size
         description: Total number of entities (keep + delete) in this duplicate group.
+
+  - name: dedup_ambiguous
+    description: >
+      Entity pairs that are possible duplicates but cannot be definitively resolved
+      by automated logic. Feeds into dedup_unresolved (the working review queue).
+
+      Two signals:
+        voterbase_id_diff_name    -- Two entities share the same TargetSmart voter
+                                     file ID (via email -> person_id -> voterbase_id)
+                                     but do NOT have the exact same normalized full
+                                     name. Includes nick-name variants, corrupted
+                                     name fields, and spouse pairs who share a voter
+                                     file record.
+        shared_phone_same_lastname -- Two entities share any 10-digit phone number
+                                     and the same normalized last name, and are not
+                                     already captured by another dedup signal. Could
+                                     be the same person registered twice, or family
+                                     members. Review conservatively; flag household
+                                     phones as KEEP_BOTH.
+
+      Pairs with EXACTLY the same normalized fn+ln go directly to dedup_candidates
+      (voterbase_id_match tier) and do not appear here.
+
+      Each pair appears exactly once, canonicalized so LEAST(interact_id) = entity_a.
+      Pairs already in dedup_candidates (either side) are excluded.
+
+      NOTE: Evaluate shared_phone_same_lastname usefulness after ~50 resolutions.
+    columns:
+      - name: pair_id
+        description: >
+          Stable canonical pair key: CONCAT(LEAST(interact_id), ':', GREATEST(interact_id)).
+          Used to join against dedup_resolutions.
+        tests:
+          - not_null
+          - unique
+      - name: entity_a_interact_id
+        description: The 36-char interact_id of the lexicographically smaller entity.
+      - name: entity_b_interact_id
+        description: The 36-char interact_id of the lexicographically larger entity.
+      - name: signal_type
+        description: Which signal detected this pair (voterbase_id_diff_name or shared_phone_same_lastname).
+      - name: signal_value
+        description: The shared value that triggered the signal (voterbase_id or normalized phone number).
+
+  - name: dedup_unresolved
+    description: >
+      The working review queue: dedup_ambiguous pairs that have not yet received
+      a decision in actionbuilder_sync.dedup_resolutions.
+
+      Two uses:
+        1. Review queue: read this view to see what needs a decision. Use
+           scripts/add_resolution.py to record decisions. On next dbt run,
+           resolved pairs disappear and (if MERGE) flow into dedup_candidates.
+        2. Hold-out signal: new records in deduplicated_names_to_load whose
+           voterbase_id is involved in an unresolved pair are withheld until
+           the ambiguity is resolved.
+
+      NOTE: actionbuilder_sync.dedup_resolutions is a BQ table managed outside
+      dbt. Create it once with scripts/create_dedup_resolutions.sql before
+      running dbt. It starts empty; all dedup_ambiguous pairs appear here first.
+    columns:
+      - name: pair_id
+        description: Stable pair key matching dedup_ambiguous. Join key for add_resolution.py.
+        tests:
+          - not_null
+          - unique
 
   # ── New Record Insertion (not yet active) ────────────────────────────────────
 
@@ -351,7 +423,10 @@ models:
         checking by person_id (covers all identity-hub-linked emails),
         direct email match, and phone for phone-only records. Designed to
         run after email_migration_needed has been applied, so keeper entities'
-        email sets include migrated secondary emails.
+        email sets include migrated secondary emails. Also holds out records
+        whose voterbase_id is involved in an unresolved dedup pair
+        (dedup_unresolved) to prevent creating a third entity for a person
+        whose existing duplicates are still under review.
 
       Layer 2 — Test account exclusion: strips gmail plus-alias emails from
         the incoming feed (same logic as dedup_candidates).
@@ -370,7 +445,8 @@ models:
         1. email_migration_needed -> sync (prepare_email_data)
         2. phone_migration_needed -> sync (prepare_phone_data)
         3. dedup_candidates deletions -> sync (remove_records)
-        4. This view -> sync (insert_new_records)
+        4. Resolve open dedup_unresolved pairs to unblock held-out records
+        5. This view -> sync (insert_new_records)
     columns:
       - name: first_name
         description: >

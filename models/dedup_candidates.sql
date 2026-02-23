@@ -4,10 +4,12 @@
 -- Use delete_interact_id (36-char UUID) to delete entities via the ActionBuilder API.
 -- If keep_interact_id IS NULL (test_account tier), delete with no replacement.
 --
--- Three tiers:
---   person_id_match  — two entities resolve to the same core_enhanced person_id via email
---   name_email_match — same first+last+email, no person_id (fallback for ~36 unmatched entities)
---   test_account     — gmail plus-alias accounts (e.g. foo+bar@gmail.com); delete outright
+-- Five tiers:
+--   person_id_match    — two entities resolve to the same core_enhanced person_id via email
+--   name_email_match   — same first+last+email, no person_id (fallback for ~36 unmatched entities)
+--   test_account       — gmail plus-alias accounts (e.g. foo+bar@gmail.com); delete outright
+--   voterbase_id_match — same TargetSmart voter file ID + exact same name (auto-deletable)
+--   resolved_merge     — MERGE decisions from dedup_resolutions table (human/AI reviewed)
 
 -- ============================================================
 -- Step 1: Primary email per entity
@@ -64,6 +66,26 @@ entity_person_ids AS (
 ),
 
 -- ============================================================
+-- Step 3b: One voterbase_id per entity via person_id.
+-- Provides a second, deeper identity signal: two entities that share
+-- the same TargetSmart voter file record are very likely the same person.
+-- Only exact-same-name pairs are auto-deleted here; name-divergent pairs
+-- surface in dedup_ambiguous for human/AI review.
+-- ============================================================
+entity_voterbase_ids AS (
+  SELECT
+    epi.entity_id,
+    eid.voterbase_id,
+    ROW_NUMBER() OVER (PARTITION BY epi.entity_id ORDER BY eid.voterbase_id) AS rn
+  FROM entity_person_ids epi
+  INNER JOIN core_targetsmart_enhanced.enh_activistpools__identities eid
+    ON epi.person_id = eid.person_id
+  WHERE epi.rn = 1
+    AND eid.voterbase_id IS NOT NULL
+    AND eid.voterbase_id != ''
+),
+
+-- ============================================================
 -- Step 4: Combine entity base info with person_id, tag count,
 -- and test-account flag
 -- ============================================================
@@ -87,13 +109,17 @@ entities_enriched AS (
       WHEN REGEXP_CONTAINS(COALESCE(pe.email_norm, ''), r'^[^+]+\+[^@]+@gmail\.com$')
       THEN TRUE
       ELSE FALSE
-    END AS is_test_account
+    END AS is_test_account,
+
+    evb.voterbase_id
 
   FROM actionbuilder_cleaned.cln_actionbuilder__entities e
   LEFT JOIN primary_emails pe
     ON pe.entity_id = e.id AND pe.email_rank = 1
   LEFT JOIN entity_person_ids epi
     ON epi.entity_id = e.id AND epi.rn = 1
+  LEFT JOIN entity_voterbase_ids evb
+    ON evb.entity_id = e.id AND evb.rn = 1
   LEFT JOIN tag_counts tc
     ON tc.entity_id = e.id
 ),
@@ -232,6 +258,101 @@ test_account_candidates AS (
     1                                       AS group_size
   FROM entities_enriched
   WHERE is_test_account = TRUE
+),
+
+-- ============================================================
+-- Step 5c: Rank within each voterbase_id group (non-test entities only)
+-- Only exact-same-name pairs auto-delete here; name-divergent pairs
+-- surface in dedup_ambiguous instead.
+-- ============================================================
+ranked_by_voterbase_id AS (
+  SELECT
+    *,
+    ROW_NUMBER() OVER (
+      PARTITION BY voterbase_id
+      ORDER BY tag_count DESC, created_at ASC
+    ) AS rank_in_group,
+    COUNT(*) OVER (PARTITION BY voterbase_id) AS group_size
+  FROM entities_enriched
+  WHERE voterbase_id IS NOT NULL
+    AND is_test_account = FALSE
+),
+
+-- ============================================================
+-- Step 6d: Voterbase_id duplicate candidates — exact same name only
+-- (Name-divergent voterbase pairs surface in dedup_ambiguous)
+-- ============================================================
+voterbase_id_candidates AS (
+  SELECT
+    del.interact_id                         AS delete_interact_id,
+    keep.interact_id                        AS keep_interact_id,
+    del.first_name                          AS delete_first_name,
+    del.last_name                           AS delete_last_name,
+    del.email                               AS delete_email,
+    keep.email                              AS keep_email,
+    del.person_id,
+    'voterbase_id_match'                    AS dedup_tier,
+    CONCAT(
+      'Shares voterbase_id ', del.voterbase_id, ' with ',
+      keep.first_name, ' ', keep.last_name,
+      ' — keeping entity with ', CAST(keep.tag_count AS STRING), ' tags',
+      ', created ', CAST(DATE(keep.created_at) AS STRING)
+    )                                       AS delete_reason,
+    del.tag_count                           AS delete_tag_count,
+    keep.tag_count                          AS keep_tag_count,
+    DATE(del.created_at)                    AS delete_created_date,
+    DATE(keep.created_at)                   AS keep_created_date,
+    del.group_size
+  FROM ranked_by_voterbase_id del
+  INNER JOIN ranked_by_voterbase_id keep
+    ON del.voterbase_id = keep.voterbase_id
+    AND keep.rank_in_group = 1
+  WHERE del.rank_in_group > 1
+    AND LOWER(TRIM(COALESCE(del.first_name, ''))) = LOWER(TRIM(COALESCE(keep.first_name, '')))
+    AND LOWER(TRIM(COALESCE(del.last_name,  ''))) = LOWER(TRIM(COALESCE(keep.last_name,  '')))
+    AND LOWER(TRIM(COALESCE(del.first_name, ''))) != ''
+    AND LOWER(TRIM(COALESCE(del.last_name,  ''))) != ''
+),
+
+-- ============================================================
+-- Step 6e: Resolved-merge candidates — MERGE decisions from the
+-- dedup_resolutions BQ table (managed outside dbt, populated by
+-- human or AI review of dedup_unresolved pairs).
+-- Requires: scripts/create_dedup_resolutions.sql run first.
+-- ============================================================
+resolved_merge_candidates AS (
+  SELECT
+    dr.delete_interact_id,
+    dr.keep_interact_id,
+    del_e.first_name                        AS delete_first_name,
+    del_e.last_name                         AS delete_last_name,
+    del_pe.email                            AS delete_email,
+    keep_pe.email                           AS keep_email,
+    CAST(NULL AS STRING)                    AS person_id,
+    'resolved_merge'                        AS dedup_tier,
+    CONCAT(
+      'Manual/AI resolution: ', COALESCE(dr.reason, '(no reason given)'),
+      ' [resolved by ', COALESCE(dr.resolved_by, 'unknown'), ']'
+    )                                       AS delete_reason,
+    COALESCE(del_tc.tag_count, 0)           AS delete_tag_count,
+    COALESCE(keep_tc.tag_count, 0)          AS keep_tag_count,
+    DATE(del_e.created_at)                  AS delete_created_date,
+    DATE(keep_e.created_at)                 AS keep_created_date,
+    1                                       AS group_size
+  FROM `proj-tmc-mem-com`.actionbuilder_sync.dedup_resolutions dr
+  JOIN actionbuilder_cleaned.cln_actionbuilder__entities del_e
+    ON dr.delete_interact_id = del_e.interact_id
+  JOIN actionbuilder_cleaned.cln_actionbuilder__entities keep_e
+    ON dr.keep_interact_id = keep_e.interact_id
+  LEFT JOIN primary_emails del_pe
+    ON del_pe.entity_id = del_e.id AND del_pe.email_rank = 1
+  LEFT JOIN primary_emails keep_pe
+    ON keep_pe.entity_id = keep_e.id AND keep_pe.email_rank = 1
+  LEFT JOIN tag_counts del_tc ON del_tc.entity_id = del_e.id
+  LEFT JOIN tag_counts keep_tc ON keep_tc.entity_id = keep_e.id
+  WHERE dr.decision IN ('MERGE_A_INTO_B', 'MERGE_B_INTO_A')
+    AND dr.delete_interact_id IS NOT NULL
+    AND dr.keep_interact_id IS NOT NULL
 )
 
 -- ============================================================
@@ -258,9 +379,11 @@ SELECT
 FROM (
   SELECT *, ROW_NUMBER() OVER (PARTITION BY delete_interact_id ORDER BY
     CASE dedup_tier
-      WHEN 'person_id_match'  THEN 1
-      WHEN 'name_email_match' THEN 2
-      WHEN 'test_account'     THEN 3
+      WHEN 'person_id_match'    THEN 1
+      WHEN 'name_email_match'   THEN 2
+      WHEN 'test_account'       THEN 3
+      WHEN 'voterbase_id_match' THEN 4
+      WHEN 'resolved_merge'     THEN 5
     END
   ) AS tier_rank
   FROM (
@@ -269,15 +392,21 @@ FROM (
     SELECT * FROM name_email_candidates
     UNION ALL
     SELECT * FROM test_account_candidates
+    UNION ALL
+    SELECT * FROM voterbase_id_candidates
+    UNION ALL
+    SELECT * FROM resolved_merge_candidates
   )
 )
 WHERE tier_rank = 1
 
 ORDER BY
   CASE dedup_tier
-    WHEN 'person_id_match'  THEN 1
-    WHEN 'name_email_match' THEN 2
-    WHEN 'test_account'     THEN 3
+    WHEN 'person_id_match'    THEN 1
+    WHEN 'name_email_match'   THEN 2
+    WHEN 'test_account'       THEN 3
+    WHEN 'voterbase_id_match' THEN 4
+    WHEN 'resolved_merge'     THEN 5
   END,
   delete_last_name,
   delete_first_name
