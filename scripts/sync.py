@@ -1,4 +1,4 @@
-"""sync.py — ActionBuilder sync script.
+"""sync.py - ActionBuilder sync script.
 
 Reads data from BigQuery (via dbt models) and pushes updates to ActionBuilder.
 
@@ -12,13 +12,14 @@ Operations:
 Usage:
     python scripts/sync.py <operation> [--campaign CAMPAIGN_ID] [--dry-run] [--limit N]
 
-    --campaign   Required for: insert_new_records, remove_records, prepare_email_data,
-                 prepare_phone_data. Optional filter for update_records.
+    --campaign   Optional filter: only process rows for this campaign interact_id UUID.
+                 When omitted, all rows are processed using per-row campaign_interact_id
+                 from BQ. Useful for running one state at a time (e.g. --campaign arizona).
     --dry-run    Fetch data and log what WOULD happen; no API writes.
     --limit N    Process only first N rows (useful for test campaign validation).
 
 Credentials (in .env):
-    BIGQUERY_API_CREDENTIALS_PASSWORD   Service account JSON (already present)
+    BIGQUERY_CREDENTIALS_PASSWORD   Service account JSON (already present)
     ACTION_BUILDER_CREDENTIALS_PASSWORD JSON: {"api_token": "...", "subdomain": "..."}
 
 Execution order (before first production run):
@@ -27,32 +28,33 @@ Execution order (before first production run):
     3. remove_records       (delete duplicate entities)
     4. Resolve open dedup_unresolved pairs (unblocks held-out new records)
     5. insert_new_records   (create genuinely new entities)
-    6. update_records       (keep participation data current — recurring)
+    6. update_records       (keep participation data current -- recurring)
 
 Notes:
+    - Campaign IDs come from BQ data (campaign_interact_id column in each view).
+      Every write operation uses the per-row campaign to ensure the entity is
+      accessible in that campaign. --campaign is only a filter, never the source
+      of the campaign ID used for API calls.
     - updates_needed has one row per (campaign_id, entity_id, field_name). The
       campaign_id column is an internal integer; this script looks up the
       interact_id UUID via a supplementary BQ query before making API calls.
     - The *_field columns in deduplicated_names_to_load are plain field-name
-      strings, not sync strings. This script builds add_tags from the numeric
-      value columns (action_network_actions, events_6m, etc.) using the
+      strings, not sync strings. This script builds add_tags from the numeric /
+      date value columns (action_network_actions, events_6m, etc.) using the
       INSERT_TAG_FIELDS mapping defined below.
 """
 
 import argparse
-import json
 import logging
-import os
 import sys
 from collections import defaultdict
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
-from google.cloud import bigquery
-from google.oauth2.service_account import Credentials
 
 from ccef_connections.connectors.action_builder import ActionBuilderConnector
+from ccef_connections.connectors.bigquery import BigQueryConnector
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -109,19 +111,63 @@ INSERT_TAG_FIELDS: Dict[str, Tuple[str, str, str]] = {
     ),
 }
 
+# ---------------------------------------------------------------------------
+# Known campaign name aliases
+# Allows --campaign arizona in addition to the full UUID.
+# ---------------------------------------------------------------------------
+CAMPAIGN_ALIASES: Dict[str, str] = {
+    'arizona':        'a41cde2c-a06f-4fed-8073-b544ca9aead7',
+    'california':     'fd65be58-cce6-400f-97f8-e14adb6558d3',
+    'colorado':       'c04eece0-5e68-410d-8436-7b28690d4fe0',
+    'florida':        'c998a441-0cc0-405e-a3fe-1b4839ec101a',
+    'georgia':        'dd6b11e3-d82a-44c5-91bb-ec516c723fd0',
+    'hawaii':         '993e08fe-bdeb-460c-832c-71c1b8c19dba',
+    'illinois':       'b6c5d9d8-c382-4da2-85ee-fbf6594d0a04',
+    'indiana':        'af5fcde6-2b84-48c3-a8bb-7de045ede252',
+    'maryland':       '16702ebe-ddc3-4c80-b832-b9f0a6881f0c',
+    'massachusetts':  '51fb121f-a9c6-47a9-a27e-163d0f81b9f2',
+    'michigan':       '8407578c-f147-4d50-a91e-245282bc4aa2',
+    'minnesota':      'f6b17bf5-90e2-4252-8e7e-cf11ff3f83a0',
+    'nebraska':       'e37684a0-1284-49b5-b4aa-855d9faa5ae2',
+    'new_mexico':     'feb40677-0ed8-4a1e-9fd2-290526dc6ab1',
+    'new_york':       '9f4b8be6-9baf-430d-b548-77227b787f86',
+    'north_carolina': '96dca89a-61bd-49f4-87a8-4368e655f1c3',
+    'ohio':           '37c5ef62-f4de-4769-ae19-624e5ae42ecd',
+    'oregon':         'e8298624-3568-4d92-948b-4429e55d6271',
+    'pennsylvania':   'a00b53e0-1ffb-4692-a347-58fe1ad73aa8',
+    'rhode_island':   'd5c48860-3764-4020-9d21-ac6024daefa0',
+    'test':           '0e41ca37-e05d-499c-943b-9d08dc8725b0',
+    'texas':          'c7cf1a2b-a9e5-43dd-93a9-928d4bc979e4',
+    'wisconsin':      '12951a1f-6d24-4923-ba31-d4aa6c4c3183',
+}
+
+
+def _resolve_campaign_arg(value: Optional[str]) -> Optional[str]:
+    """
+    Resolve a --campaign value to a full UUID.
+
+    Accepts:
+      - Full UUID (returned as-is)
+      - Lowercase state name alias (e.g. "arizona", "north_carolina")
+    Returns None if value is None.
+    """
+    if value is None:
+        return None
+    normalized = value.lower().replace(' ', '_').replace('-', '_')
+    if normalized in CAMPAIGN_ALIASES:
+        return CAMPAIGN_ALIASES[normalized]
+    return value
+
 
 # ---------------------------------------------------------------------------
 # Client helpers
 # ---------------------------------------------------------------------------
 
-def _make_bq_client() -> bigquery.Client:
-    """Build a BigQuery client from BIGQUERY_API_CREDENTIALS_PASSWORD."""
-    load_dotenv(dotenv_path='.env')
-    cred_json = os.environ.get('BIGQUERY_API_CREDENTIALS_PASSWORD', '')
-    if not cred_json:
-        raise RuntimeError('BIGQUERY_API_CREDENTIALS_PASSWORD not set in .env')
-    creds = Credentials.from_service_account_info(json.loads(cred_json))
-    return bigquery.Client(credentials=creds, project=BQ_PROJECT)
+def _make_bq_client() -> BigQueryConnector:
+    """Build a BigQuery client using ccef-connections BigQueryConnector."""
+    bq = BigQueryConnector(project_id=BQ_PROJECT)
+    bq.connect()
+    return bq
 
 
 def _make_ab_client() -> ActionBuilderConnector:
@@ -135,9 +181,9 @@ def _make_ab_client() -> ActionBuilderConnector:
 # BQ query helpers
 # ---------------------------------------------------------------------------
 
-def _query(bq: bigquery.Client, sql: str) -> List[Dict[str, Any]]:
+def _query(bq: BigQueryConnector, sql: str) -> List[Dict[str, Any]]:
     """Run a BigQuery query and return rows as list of dicts."""
-    rows = list(bq.query(sql).result())
+    rows = list(bq.query(sql))
     return [dict(r) for r in rows]
 
 
@@ -225,7 +271,7 @@ def _build_insert_tag(col: str, value: Any) -> Optional[Dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 def update_records(
-    bq: bigquery.Client,
+    bq: BigQueryConnector,
     ab: Optional[ActionBuilderConnector],
     campaign_filter: Optional[str],
     dry_run: bool,
@@ -311,7 +357,7 @@ def update_records(
                 n_removals_done += 1
                 logger.debug(f'  Deleted tagging {tagging_id[:8]}... for {label}')
 
-            # Step b: post new tag values
+            # Step b: post new tag values (skip if nothing to add, e.g. Clear Value)
             if add_tags:
                 ab.update_entity_with_tags(campaign_id, entity_id, add_tags)
                 n_tags_added += len(add_tags)
@@ -331,17 +377,18 @@ def update_records(
 
 
 def insert_new_records(
-    bq: bigquery.Client,
+    bq: BigQueryConnector,
     ab: Optional[ActionBuilderConnector],
-    campaign_id: str,
+    campaign_filter: Optional[str],
     dry_run: bool,
     limit: Optional[int],
 ) -> None:
     """
     Insert genuinely new entities into ActionBuilder.
 
-    Reads actionbuilder_sync.deduplicated_names_to_load. Builds OSDI person_data
-    from contact fields and add_tags from participation value columns.
+    Reads actionbuilder_sync.deduplicated_names_to_load. Uses campaign_interact_id
+    from each row (derived from the entity's state) for the API call.
+    Pass --campaign to process only one state's records.
     """
     logger.info('insert_new_records: fetching rows from deduplicated_names_to_load...')
     sql = f'SELECT * FROM `{BQ_PROJECT}.{BQ_DATASET}.deduplicated_names_to_load`'
@@ -353,10 +400,29 @@ def insert_new_records(
         logger.info('insert_new_records: no rows to process')
         return
 
-    logger.info(f'insert_new_records: {len(rows)} entities to insert')
-    n_ok = n_err = 0
+    logger.info(f'insert_new_records: {len(rows)} entities to consider')
+    n_ok = n_err = n_skip = 0
 
     for row in rows:
+        campaign_id = row.get('campaign_interact_id')
+        name = (
+            f"{row.get('first_name', '')} {row.get('last_name', '')}".strip()
+        )
+        label = (
+            f'{name!r} '
+            f'email={row.get("email") or "(none)"} '
+            f'state={row.get("state") or "?"}'
+        )
+
+        if not campaign_id:
+            logger.warning(f'  Skipping {label}: no campaign_interact_id (state has no AB campaign)')
+            n_skip += 1
+            continue
+
+        if campaign_filter and campaign_id != campaign_filter:
+            n_skip += 1
+            continue
+
         # Build OSDI person_data from contact fields
         person_data: Dict[str, Any] = {}
 
@@ -387,18 +453,10 @@ def insert_new_records(
             if tag:
                 add_tags.append(tag)
 
-        name = (
-            f"{row.get('first_name', '')} {row.get('last_name', '')}".strip()
-        )
-        label = (
-            f'{name!r} '
-            f'email={row.get("email") or "(none)"} '
-            f'phone={row.get("phone_number") or "(none)"}'
-        )
-
         if dry_run:
             logger.info(
                 f'  [DRY-RUN] Would insert entity {label} '
+                f'into campaign {campaign_id[:8]}... '
                 f'with {len(add_tags)} tag(s)'
             )
             n_ok += 1
@@ -406,19 +464,19 @@ def insert_new_records(
 
         try:
             ab.insert_entity(campaign_id, person_data, add_tags or None)
-            logger.debug(f'  Inserted {label}')
+            logger.debug(f'  Inserted {label} (campaign={campaign_id[:8]}...)')
             n_ok += 1
         except Exception as e:
             logger.error(f'  ERROR inserting {label}: {e}')
             n_err += 1
 
-    logger.info(f'insert_new_records: done. ok={n_ok} err={n_err}')
+    logger.info(f'insert_new_records: done. ok={n_ok} err={n_err} skipped={n_skip}')
 
 
 def remove_records(
-    bq: bigquery.Client,
+    bq: BigQueryConnector,
     ab: Optional[ActionBuilderConnector],
-    campaign_id: str,
+    campaign_filter: Optional[str],
     dry_run: bool,
     limit: Optional[int],
 ) -> None:
@@ -426,11 +484,12 @@ def remove_records(
     Delete duplicate entities from ActionBuilder.
 
     Reads actionbuilder_sync.dedup_candidates and calls delete_person for each
-    delete_interact_id.
+    delete_interact_id, using the per-row campaign_interact_id.
     """
     logger.info('remove_records: fetching rows from dedup_candidates...')
     sql = (
-        f'SELECT delete_interact_id, delete_first_name, delete_last_name, dedup_tier '
+        f'SELECT delete_interact_id, delete_first_name, delete_last_name, '
+        f'dedup_tier, campaign_interact_id '
         f'FROM `{BQ_PROJECT}.{BQ_DATASET}.dedup_candidates`'
     )
     if limit:
@@ -441,11 +500,12 @@ def remove_records(
         logger.info('remove_records: no rows to process')
         return
 
-    logger.info(f'remove_records: {len(rows)} entities to delete')
-    n_ok = n_err = 0
+    logger.info(f'remove_records: {len(rows)} entities to consider')
+    n_ok = n_err = n_skip = 0
 
     for row in rows:
         entity_id = str(row['delete_interact_id'])
+        campaign_id = row.get('campaign_interact_id')
         name = (
             f"{row.get('delete_first_name', '')} "
             f"{row.get('delete_last_name', '')}".strip()
@@ -453,8 +513,17 @@ def remove_records(
         tier = row.get('dedup_tier', '?')
         label = f'{entity_id[:8]}... ({name!r}, tier={tier})'
 
+        if not campaign_id:
+            logger.warning(f'  Skipping {label}: entity has no active campaign')
+            n_skip += 1
+            continue
+
+        if campaign_filter and campaign_id != campaign_filter:
+            n_skip += 1
+            continue
+
         if dry_run:
-            logger.info(f'  [DRY-RUN] Would delete entity {label}')
+            logger.info(f'  [DRY-RUN] Would delete entity {label} (campaign={campaign_id[:8]}...)')
             n_ok += 1
             continue
 
@@ -466,13 +535,13 @@ def remove_records(
             logger.error(f'  ERROR deleting {label}: {e}')
             n_err += 1
 
-    logger.info(f'remove_records: done. ok={n_ok} err={n_err}')
+    logger.info(f'remove_records: done. ok={n_ok} err={n_err} skipped={n_skip}')
 
 
 def prepare_email_data(
-    bq: bigquery.Client,
+    bq: BigQueryConnector,
     ab: Optional[ActionBuilderConnector],
-    campaign_id: str,
+    campaign_filter: Optional[str],
     dry_run: bool,
     limit: Optional[int],
 ) -> None:
@@ -480,13 +549,14 @@ def prepare_email_data(
     Add secondary emails to keeper entities before dedup deletion.
 
     Reads actionbuilder_sync.email_migration_needed. Each row adds one email
-    address to the keeper entity via update_person.
+    address to the keeper entity via update_person, using the per-row
+    campaign_interact_id.
 
     Run this BEFORE remove_records so migrated emails survive the deletion.
     """
     logger.info('prepare_email_data: fetching rows from email_migration_needed...')
     sql = (
-        f'SELECT entity_id, email_to_add, delete_interact_id '
+        f'SELECT entity_id, email_to_add, delete_interact_id, campaign_interact_id '
         f'FROM `{BQ_PROJECT}.{BQ_DATASET}.email_migration_needed`'
     )
     if limit:
@@ -497,16 +567,26 @@ def prepare_email_data(
         logger.info('prepare_email_data: no rows to process')
         return
 
-    logger.info(f'prepare_email_data: {len(rows)} email(s) to migrate')
-    n_ok = n_err = 0
+    logger.info(f'prepare_email_data: {len(rows)} email(s) to consider')
+    n_ok = n_err = n_skip = 0
 
     for row in rows:
         keeper_id = str(row['entity_id'])
         email = str(row['email_to_add'])
+        campaign_id = row.get('campaign_interact_id')
         label = f'keeper={keeper_id[:8]}... email={email!r}'
 
+        if not campaign_id:
+            logger.warning(f'  Skipping {label}: keeper has no active campaign')
+            n_skip += 1
+            continue
+
+        if campaign_filter and campaign_id != campaign_filter:
+            n_skip += 1
+            continue
+
         if dry_run:
-            logger.info(f'  [DRY-RUN] Would add email {label}')
+            logger.info(f'  [DRY-RUN] Would add email {label} (campaign={campaign_id[:8]}...)')
             n_ok += 1
             continue
 
@@ -522,13 +602,13 @@ def prepare_email_data(
             logger.error(f'  ERROR adding email {label}: {e}')
             n_err += 1
 
-    logger.info(f'prepare_email_data: done. ok={n_ok} err={n_err}')
+    logger.info(f'prepare_email_data: done. ok={n_ok} err={n_err} skipped={n_skip}')
 
 
 def prepare_phone_data(
-    bq: bigquery.Client,
+    bq: BigQueryConnector,
     ab: Optional[ActionBuilderConnector],
-    campaign_id: str,
+    campaign_filter: Optional[str],
     dry_run: bool,
     limit: Optional[int],
 ) -> None:
@@ -536,13 +616,14 @@ def prepare_phone_data(
     Add secondary phone numbers to keeper entities before dedup deletion.
 
     Reads actionbuilder_sync.phone_migration_needed. Each row adds one phone
-    number to the keeper entity via update_person.
+    number to the keeper entity via update_person, using the per-row
+    campaign_interact_id.
 
     Run this BEFORE remove_records so migrated phone numbers survive the deletion.
     """
     logger.info('prepare_phone_data: fetching rows from phone_migration_needed...')
     sql = (
-        f'SELECT entity_id, phone_to_add, delete_interact_id '
+        f'SELECT entity_id, phone_to_add, delete_interact_id, campaign_interact_id '
         f'FROM `{BQ_PROJECT}.{BQ_DATASET}.phone_migration_needed`'
     )
     if limit:
@@ -553,16 +634,26 @@ def prepare_phone_data(
         logger.info('prepare_phone_data: no rows to process')
         return
 
-    logger.info(f'prepare_phone_data: {len(rows)} phone(s) to migrate')
-    n_ok = n_err = 0
+    logger.info(f'prepare_phone_data: {len(rows)} phone(s) to consider')
+    n_ok = n_err = n_skip = 0
 
     for row in rows:
         keeper_id = str(row['entity_id'])
         phone = str(row['phone_to_add'])
+        campaign_id = row.get('campaign_interact_id')
         label = f'keeper={keeper_id[:8]}... phone={phone!r}'
 
+        if not campaign_id:
+            logger.warning(f'  Skipping {label}: keeper has no active campaign')
+            n_skip += 1
+            continue
+
+        if campaign_filter and campaign_id != campaign_filter:
+            n_skip += 1
+            continue
+
         if dry_run:
-            logger.info(f'  [DRY-RUN] Would add phone {label}')
+            logger.info(f'  [DRY-RUN] Would add phone {label} (campaign={campaign_id[:8]}...)')
             n_ok += 1
             continue
 
@@ -578,7 +669,7 @@ def prepare_phone_data(
             logger.error(f'  ERROR adding phone {label}: {e}')
             n_err += 1
 
-    logger.info(f'prepare_phone_data: done. ok={n_ok} err={n_err}')
+    logger.info(f'prepare_phone_data: done. ok={n_ok} err={n_err} skipped={n_skip}')
 
 
 # ---------------------------------------------------------------------------
@@ -591,14 +682,6 @@ OPERATIONS = {
     'remove_records': remove_records,
     'prepare_email_data': prepare_email_data,
     'prepare_phone_data': prepare_phone_data,
-}
-
-# Operations that require --campaign (update_records accepts it as an optional filter)
-CAMPAIGN_REQUIRED = {
-    'insert_new_records',
-    'remove_records',
-    'prepare_email_data',
-    'prepare_phone_data',
 }
 
 
@@ -615,12 +698,12 @@ def main() -> None:
     )
     parser.add_argument(
         '--campaign',
-        metavar='CAMPAIGN_ID',
+        metavar='CAMPAIGN',
         help=(
-            'Campaign interact_id (UUID). '
-            'Required for: insert_new_records, remove_records, '
-            'prepare_email_data, prepare_phone_data. '
-            'Optional filter for update_records.'
+            'Optional filter: process only rows for this campaign. '
+            'Accepts a full UUID or a lowercase state name alias '
+            '(e.g. "arizona", "north_carolina"). '
+            'When omitted, all rows are processed using per-row campaign data from BQ.'
         ),
     )
     parser.add_argument(
@@ -636,10 +719,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.operation in CAMPAIGN_REQUIRED and not args.campaign:
-        parser.error(f'--campaign is required for operation: {args.operation}')
+    # Resolve state name aliases for --campaign
+    campaign_filter = _resolve_campaign_arg(args.campaign)
+    if args.campaign and campaign_filter != args.campaign:
+        logger.info(f'--campaign {args.campaign!r} resolved to {campaign_filter}')
 
-    # Build BQ client (also calls load_dotenv so AB env var is available)
+    # Load .env early so both BQ and AB credentials are available to ccef-connections
+    load_dotenv(dotenv_path='.env')
+
+    # Build BQ client
     bq = _make_bq_client()
 
     # Build AB client only when not dry-running (no API calls will be made)
@@ -649,7 +737,7 @@ def main() -> None:
     else:
         ab = _make_ab_client()
 
-    OPERATIONS[args.operation](bq, ab, args.campaign, args.dry_run, args.limit)
+    OPERATIONS[args.operation](bq, ab, campaign_filter, args.dry_run, args.limit)
 
 
 if __name__ == '__main__':

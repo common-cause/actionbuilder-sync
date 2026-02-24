@@ -12,8 +12,6 @@ MERGE decisions flow into dedup_candidates on the next dbt run.
 """
 
 import argparse
-import json
-import os
 import sys
 from datetime import timezone, datetime
 from typing import Literal
@@ -25,8 +23,8 @@ from pydantic import BaseModel
 load_dotenv(dotenv_path='.env')
 
 from ccef_connections import OpenAIConnector
-from google.cloud import bigquery
-from google.oauth2.service_account import Credentials
+from ccef_connections.connectors.bigquery import BigQueryConnector
+from ccef_connections.exceptions import WriteError
 
 
 # ── BigQuery setup ─────────────────────────────────────────────────────────────
@@ -35,17 +33,13 @@ PROJECT = "proj-tmc-mem-com"
 RESOLUTIONS_TABLE = f"{PROJECT}.actionbuilder_sync.dedup_resolutions"
 
 
-def get_bq_client():
-    cred_json = os.environ.get("BIGQUERY_API_CREDENTIALS_PASSWORD", "")
-    if not cred_json:
-        sys.exit("ERROR: BIGQUERY_API_CREDENTIALS_PASSWORD not set")
-    return bigquery.Client(
-        credentials=Credentials.from_service_account_info(json.loads(cred_json)),
-        project=PROJECT,
-    )
+def get_bq_client() -> BigQueryConnector:
+    bq = BigQueryConnector(project_id=PROJECT)
+    bq.connect()
+    return bq
 
 
-def fetch_unresolved_pairs(client):
+def fetch_unresolved_pairs(client: BigQueryConnector):
     rows = list(client.query(f"""
         SELECT
           pair_id,
@@ -73,14 +67,15 @@ def fetch_unresolved_pairs(client):
           entity_b_created_date
         FROM `{PROJECT}`.actionbuilder_sync.dedup_unresolved
         ORDER BY signal_type, entity_a_last_name, entity_a_first_name
-    """).result())
+    """))
     return rows
 
 
 # ── Pydantic response model ────────────────────────────────────────────────────
 
 class PairDecision(BaseModel):
-    pair_id: str
+    seq_id: int  # sequential integer from the prompt (1-based), NOT the UUID pair_id
+    entity_that_survives: Literal["A", "B", "neither"]
     decision: Literal["MERGE_A_INTO_B", "MERGE_B_INTO_A", "KEEP_BOTH", "DEFER"]
     reason: str
     confidence: Literal["high", "medium", "low"]
@@ -103,21 +98,82 @@ Each pair of records was flagged by one of two signals:
     email -> identity hub person_id -> voterbase_id), but their names differ.
     Exact-same-name matches were already auto-deleted; these are the ambiguous ones.
 
+    IMPORTANT for this signal: a voterbase_id match does NOT guarantee the same
+    person. Two household members who each registered with their own email can both
+    resolve to the same voter file entry (shared address). Shared household emails
+    are common in Common Cause's membership demographic and cannot be resolved
+    by the system.
+
+    Threshold rule for voterbase_id_diff_name:
+      → If the first names are clearly VARIANTS OF THE SAME NAME (nicknames,
+        accented characters, middle names, truncations, corrupted forms):
+        these are the same person — proceed to STEP 2 to choose which to keep.
+      → If the first names are CLEARLY DIFFERENT PEOPLE (different given names
+        with no obvious relationship — e.g. "Ruthie" vs "Larry", "Sandra" vs "Tom",
+        "Richard" vs "Sylvia"):
+        output KEEP_BOTH. Do not merge. The voterbase_id match is most likely a
+        household artifact, not evidence of the same person.
+
   shared_phone_same_lastname
     Both records share a 10-digit phone number and the same last name but reached
     this queue because they didn't match through the email identity chain.
     Common causes: same person with two email registrations, OR household members
-    sharing a landline (different first names = different people).
+    sharing a landline.
+
+    Threshold rule for shared_phone_same_lastname:
+      → If the first names are CLEARLY DIFFERENT PEOPLE (different given names
+        with no obvious relationship — e.g. "Bill" vs "Susan", "Peggy" vs "Michael",
+        "Reeves" vs "Carol"):
+        output KEEP_BOTH. This is a household landline, not evidence of the same
+        person. Tag count NEVER overrides this rule. Even 25 tags vs 1 tag.
+      → If the first names are the SAME PERSON (same name or variant — same name,
+        nickname, accented character, middle initial, etc.):
+        proceed to the merge rules below to choose which entity to keep.
 
 For each pair, decide:
 
   MERGE_A_INTO_B  — Entity A is DELETED. Entity B SURVIVES.
   MERGE_B_INTO_A  — Entity B is DELETED. Entity A SURVIVES.
-  KEEP_BOTH       — Confirmed distinct people (e.g. household members with different first names)
-  DEFER           — Genuinely unclear; needs human review
+  KEEP_BOTH       — Use ONLY when you are CONFIDENT these are DIFFERENT PEOPLE
+                    (e.g. household members with clearly different first names).
+                    Do NOT use KEEP_BOTH when you believe they are the same person
+                    but cannot decide which to keep — use DEFER for that.
+  DEFER           — Same person but genuinely unclear which to keep, OR you
+                    suspect a data quality error rather than a true duplicate.
 
-IMPORTANT: Before outputting a decision, state internally: "I want to DELETE ___ and KEEP ___."
-Then verify: if you want to delete A, output MERGE_A_INTO_B. If you want to delete B, output MERGE_B_INTO_A.
+IMPORTANT — TWO-STEP COMMIT FOR EVERY PAIR:
+
+  Step 1: Fill in `entity_that_survives` FIRST.
+    Which entity will be KEPT (remains in ActionBuilder after the merge)?
+      "A"       → Entity A is kept. Entity B is removed.
+      "B"       → Entity B is kept. Entity A is removed.
+      "neither" → No deletion (KEEP_BOTH or DEFER)
+
+  Step 2: Derive `decision` DIRECTLY from `entity_that_survives`. No exceptions.
+      entity_that_survives = "A" → Entity B is removed → decision = MERGE_B_INTO_A
+      entity_that_survives = "B" → Entity A is removed → decision = MERGE_A_INTO_B
+      entity_that_survives = "neither"                 → decision = KEEP_BOTH or DEFER
+
+  If you find yourself writing entity_that_survives = "A" but decision = MERGE_A_INTO_B,
+  you have made an error — MERGE_A_INTO_B removes A. Stop and correct.
+
+
+── SHORTCUT: IDENTICAL NAME + SHARED PHONE ────────────────────────────────────
+
+If both entities have the EXACT SAME first AND last name (ignoring middle initials,
+hyphenation, and accents) AND they share a phone number (either signal type):
+  → They are definitively the same person.
+  → Always MERGE. Never output KEEP_BOTH. Not even when tags are equal.
+  → Skip to STEP 3 to choose which entity to keep.
+  → Use tag count first (3+ advantage), then oldest created_date as tiebreaker.
+  → If tags AND created_date are both tied: always keep Entity A. No exceptions.
+    Entity A is simply a stable, arbitrary tiebreaker when nothing else distinguishes them.
+
+Examples of "exact same name" for this shortcut:
+  "Dianne Sawyer Lipkin" vs "Dianne Sawyer Lipkin"  → same (identical)
+  "Erica Leach" vs "Erica Leach"                    → same (identical)
+  "Robert Krause" vs "Robert L. Krause"             → same (middle initial added)
+  "Diane Shuster-Cooper" vs "Diane Shuster Cooper"  → same (hyphenation only)
 
 
 ── STEP 1: IS EITHER NAME CORRUPTED OR UNNATURAL? ─────────────────────────────
@@ -136,13 +192,24 @@ Corruption patterns to recognize:
     → The entity with the repeated word is CORRUPTED. DELETE that entity.
     → Tag count does NOT matter. Even if the corrupted entity has 19 tags and the
       clean one has only 1 tag, the corrupted entity is still deleted.
-    → Examples:
-        A = "O'Toole O'Toole" (corrupted, 1 tag), B = "James O'Toole" (clean, 1 tag)
-          → DELETE A, KEEP B → MERGE_A_INTO_B.
+    → Examples — note the corrupted entity can be either A or B:
+
+        A = "Karen Klauseger Klauseger" (corrupted, 1 tag), B = "Karen Klauseger" (clean, 13 tags)
+          → A is corrupted. KEEP B, DELETE A.
+          → entity_that_survives = "B". Output: MERGE_A_INTO_B.
+
         A = "Catherine Turcer" (clean, 1 tag), B = "Catherine Turcer Turcer" (corrupted, 19 tags)
-          → B is corrupted. DELETE B (even though B has more tags). KEEP A → MERGE_B_INTO_A.
-          Internal check: "I want to DELETE B and KEEP A."
-            Deleting B → MERGE_B_INTO_A. Output: MERGE_B_INTO_A.
+          → B is corrupted. KEEP A, DELETE B (even though B has 18 more tags — tag count
+            does NOT override corruption).
+          → entity_that_survives = "A". Output: MERGE_B_INTO_A.
+
+        A = "James O'Toole" (clean, 1 tag), B = "O'Toole O'Toole" (corrupted, 1 tag)
+          → B is corrupted. KEEP A, DELETE B.
+          → entity_that_survives = "A". Output: MERGE_B_INTO_A.
+
+        A = "Laurine Laurine Cooke" (corrupted, 1 tag), B = "Laurine Cooke" (clean, 1 tag)
+          → A is corrupted. KEEP B, DELETE A.
+          → entity_that_survives = "B". Output: MERGE_A_INTO_B.
 
   Household concatenation
     Two people's names have been jammed into one record using "&", "And",
@@ -286,7 +353,7 @@ def format_pairs_for_prompt(rows) -> str:
     lines = [f"Total pairs to review: {len(rows)}\n"]
     for i, r in enumerate(rows, 1):
         lines.append(f"--- Pair {i} ---")
-        lines.append(f"pair_id: {r.pair_id}")
+        lines.append(f"seq_id: {i}  (use this integer as the identifier in your response)")
         lines.append(f"signal: {r.signal_type}  value: {r.signal_value}")
         lines.append(
             f"Entity A: {r.entity_a_first_name} {r.entity_a_last_name}"
@@ -310,19 +377,18 @@ def format_pairs_for_prompt(rows) -> str:
 
 # ── Write resolutions to BQ ────────────────────────────────────────────────────
 
-def write_resolutions(client, pair_rows_by_id, decisions, skip_low_confidence=False):
+def write_resolutions(client, seq_to_decision, skip_low_confidence=False):
+    """Write resolved decisions to BQ.
+
+    seq_to_decision: dict mapping seq_id -> (PairDecision, real_pair_id, pair_row)
+    """
     rows_to_insert = []
     skipped = []
     now = datetime.now(tz=timezone.utc).isoformat()
 
-    for d in decisions:
+    for d, real_pair_id, pair in seq_to_decision.values():
         if skip_low_confidence and d.confidence == "low":
-            skipped.append(d.pair_id)
-            continue
-
-        pair = pair_rows_by_id.get(d.pair_id)
-        if not pair:
-            print(f"  WARNING: pair_id {d.pair_id!r} not found in fetched data, skipping")
+            skipped.append(real_pair_id)
             continue
 
         if d.decision == "MERGE_A_INTO_B":
@@ -336,7 +402,7 @@ def write_resolutions(client, pair_rows_by_id, decisions, skip_low_confidence=Fa
             keep_iid = None
 
         rows_to_insert.append({
-            "pair_id": d.pair_id,
+            "pair_id": real_pair_id,
             "entity_a_interact_id": pair.entity_a_interact_id,
             "entity_b_interact_id": pair.entity_b_interact_id,
             "decision": d.decision,
@@ -348,9 +414,10 @@ def write_resolutions(client, pair_rows_by_id, decisions, skip_low_confidence=Fa
         })
 
     if rows_to_insert:
-        errors = client.insert_rows_json(RESOLUTIONS_TABLE, rows_to_insert)
-        if errors:
-            sys.exit(f"ERROR inserting rows: {errors}")
+        try:
+            client.insert_rows(RESOLUTIONS_TABLE, rows_to_insert)
+        except WriteError as e:
+            sys.exit(f"ERROR inserting rows: {e}")
         print(f"\nWrote {len(rows_to_insert)} resolution(s) to dedup_resolutions.")
 
     if skipped:
@@ -382,6 +449,8 @@ def main():
 
     print(f"Found {len(rows)} unresolved pairs. Sending to {args.model}...")
     pair_rows_by_id = {r.pair_id: r for r in rows}
+    # Sequential index → real pair_id (avoids UUID mangling in structured output)
+    seq_to_pair_id = {i: r.pair_id for i, r in enumerate(rows, 1)}
 
     # Build prompt
     user_content = format_pairs_for_prompt(rows)
@@ -396,14 +465,65 @@ def main():
         temperature=0.1,
     )
 
-    # Display results
-    merge_a = [d for d in result.decisions if d.decision == "MERGE_A_INTO_B"]
-    merge_b = [d for d in result.decisions if d.decision == "MERGE_B_INTO_A"]
-    keep_both = [d for d in result.decisions if d.decision == "KEEP_BOTH"]
-    defer = [d for d in result.decisions if d.decision == "DEFER"]
+    # Resolve seq_id → real pair data, and warn about any seq_ids out of range.
+    # Values are (PairDecision, real_pair_id, pair_row) triples.
+    seq_to_decision = {}
+    for d in result.decisions:
+        real_pair_id = seq_to_pair_id.get(d.seq_id)
+        if real_pair_id is None:
+            print(f"WARNING: GPT returned seq_id={d.seq_id} which is out of range (1-{len(rows)}). Skipping.")
+        else:
+            pair = pair_rows_by_id[real_pair_id]
+            seq_to_decision[d.seq_id] = (d, real_pair_id, pair)
+
+    missing_seqs = set(seq_to_pair_id.keys()) - set(seq_to_decision.keys())
+    if missing_seqs:
+        missing_names = [
+            f"{pair_rows_by_id[seq_to_pair_id[s]].entity_a_last_name}"
+            for s in sorted(missing_seqs)
+        ]
+        print(f"WARNING: GPT did not return decisions for seq_id(s) {sorted(missing_seqs)} "
+              f"({', '.join(missing_names)}). Those pairs will not be written.")
+
+    # Derive decision from entity_that_survives for all MERGE cases — do this BEFORE
+    # display so all printed decisions reflect the final corrected values.
+    # entity_that_survives is the authoritative field; the MERGE direction label from
+    # the model is unreliable due to linguistic ambiguity in "MERGE X INTO Y".
+    #   entity_that_survives="A" → B is removed → MERGE_B_INTO_A
+    #   entity_that_survives="B" → A is removed → MERGE_A_INTO_B
+    overrides = 0
+    for d, real_pair_id, pair in seq_to_decision.values():
+        if d.entity_that_survives == "A":
+            correct = "MERGE_B_INTO_A"
+        elif d.entity_that_survives == "B":
+            correct = "MERGE_A_INTO_B"
+        else:
+            correct = None  # KEEP_BOTH or DEFER — leave decision as-is
+
+        if correct is not None and d.decision != correct:
+            pair = pair_rows_by_id[real_pair_id]
+            a_name = f"{pair.entity_a_first_name} {pair.entity_a_last_name}"
+            b_name = f"{pair.entity_b_first_name} {pair.entity_b_last_name}"
+            print(f"  LABEL OVERRIDE seq {d.seq_id} ({a_name} / {b_name})")
+            print(f"    entity_that_survives={d.entity_that_survives!r} -> forcing decision to "
+                  f"{correct!r} (was {d.decision!r})")
+            d.decision = correct
+            overrides += 1
+        elif correct is not None:
+            d.decision = correct  # re-derive cleanly regardless
+
+    if overrides:
+        print(f"\n{overrides} direction label(s) overridden from entity_that_survives.\n")
+
+    # Display final results
+    all_decisions = [d for d, _, _ in seq_to_decision.values()]
+    merge_a = [d for d in all_decisions if d.decision == "MERGE_A_INTO_B"]
+    merge_b = [d for d in all_decisions if d.decision == "MERGE_B_INTO_A"]
+    keep_both = [d for d in all_decisions if d.decision == "KEEP_BOTH"]
+    defer = [d for d in all_decisions if d.decision == "DEFER"]
 
     print(f"\n{'='*60}")
-    print(f"GPT-4o decisions on {len(result.decisions)} pairs:")
+    print(f"GPT-4o decisions on {len(all_decisions)} pairs:")
     print(f"  MERGE_A_INTO_B : {len(merge_a)}")
     print(f"  MERGE_B_INTO_A : {len(merge_b)}")
     print(f"  KEEP_BOTH      : {len(keep_both)}")
@@ -413,28 +533,26 @@ def main():
     # Print each decision
     for signal_label in ["voterbase_id_diff_name", "shared_phone_same_lastname"]:
         signal_decisions = [
-            d for d in result.decisions
-            if pair_rows_by_id.get(d.pair_id) and
-               pair_rows_by_id[d.pair_id].signal_type == signal_label
+            (d, real_pair_id, pair)
+            for d, real_pair_id, pair in seq_to_decision.values()
+            if pair.signal_type == signal_label
         ]
         if not signal_decisions:
             continue
         print(f"\n--- {signal_label.upper()} ({len(signal_decisions)}) ---\n")
-        for d in signal_decisions:
-            pair = pair_rows_by_id.get(d.pair_id)
-            if pair:
-                a_name = f"{pair.entity_a_first_name} {pair.entity_a_last_name}"
-                b_name = f"{pair.entity_b_first_name} {pair.entity_b_last_name}"
-                print(f"  [{d.confidence.upper()}] {d.decision}")
-                print(f"    A: {a_name} ({pair.entity_a_email}, tags:{pair.entity_a_tag_count})")
-                print(f"    B: {b_name} ({pair.entity_b_email}, tags:{pair.entity_b_tag_count})")
-                print(f"    Reason: {d.reason}")
-                print()
+        for d, real_pair_id, pair in sorted(signal_decisions, key=lambda x: x[0].seq_id):
+            a_name = f"{pair.entity_a_first_name} {pair.entity_a_last_name}"
+            b_name = f"{pair.entity_b_first_name} {pair.entity_b_last_name}"
+            print(f"  [{d.confidence.upper()}] {d.decision}  (survives={d.entity_that_survives})")
+            print(f"    A: {a_name} ({pair.entity_a_email}, tags:{pair.entity_a_tag_count})")
+            print(f"    B: {b_name} ({pair.entity_b_email}, tags:{pair.entity_b_tag_count})")
+            print(f"    Reason: {d.reason}")
+            print()
 
     # Write if requested
     if args.write:
         print("\nWriting decisions to dedup_resolutions...")
-        n = write_resolutions(bq, pair_rows_by_id, result.decisions, args.skip_low_confidence)
+        n = write_resolutions(bq, seq_to_decision, args.skip_low_confidence)
         print(f"Done. Run 'bash dbt.sh run -s dedup_candidates deduplicated_names_to_load' "
               f"to propagate MERGE decisions.")
     else:

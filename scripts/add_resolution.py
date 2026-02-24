@@ -21,15 +21,13 @@ The dedup_resolutions table must already exist (run scripts/create_dedup_resolut
 """
 
 import argparse
-import json
-import os
 import sys
-import tempfile
 from datetime import timezone, datetime
 
 from dotenv import load_dotenv
-from google.cloud import bigquery
-from google.oauth2.service_account import Credentials
+
+from ccef_connections.connectors.bigquery import BigQueryConnector
+from ccef_connections.exceptions import WriteError
 
 DATASET = "actionbuilder_sync"
 TABLE = "dedup_resolutions"
@@ -37,13 +35,11 @@ PROJECT = "proj-tmc-mem-com"
 VALID_DECISIONS = {"MERGE_A_INTO_B", "MERGE_B_INTO_A", "KEEP_BOTH", "DEFER"}
 
 
-def get_bq_client():
-    load_dotenv()
-    cred_json = os.environ.get("BIGQUERY_API_CREDENTIALS_PASSWORD", "")
-    if not cred_json:
-        sys.exit("ERROR: BIGQUERY_API_CREDENTIALS_PASSWORD not set in environment / .env")
-    creds = Credentials.from_service_account_info(json.loads(cred_json))
-    return bigquery.Client(credentials=creds, project=PROJECT)
+def get_bq_client() -> BigQueryConnector:
+    load_dotenv(dotenv_path='.env')
+    bq = BigQueryConnector(project_id=PROJECT)
+    bq.connect()
+    return bq
 
 
 def parse_args():
@@ -107,15 +103,13 @@ def main():
     table_ref = f"{PROJECT}.{DATASET}.{TABLE}"
 
     # Check for existing resolution for this pair_id
+    # pair_id is validated above to be two 36-char UUIDs — safe to inline
     check_query = f"""
         SELECT pair_id, decision, resolved_by, resolved_at
         FROM `{table_ref}`
-        WHERE pair_id = @pair_id
+        WHERE pair_id = '{args.pair_id}'
     """
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter("pair_id", "STRING", args.pair_id)]
-    )
-    existing = list(client.query(check_query, job_config=job_config).result())
+    existing = list(client.query(check_query))
     if existing:
         r = existing[0]
         print(
@@ -126,9 +120,10 @@ def main():
             f"for this pair_id wins (de-duped by dedup_candidates QUALIFY)."
         )
 
-    errors = client.insert_rows_json(table_ref, [row])
-    if errors:
-        sys.exit(f"ERROR inserting row: {errors}")
+    try:
+        client.insert_rows(table_ref, [row])
+    except WriteError as e:
+        sys.exit(f"ERROR inserting row: {e}")
 
     print(f"Recorded {decision} for pair {args.pair_id}")
     if delete_iid:
