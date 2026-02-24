@@ -29,6 +29,23 @@ Do NOT run `dbt` directly — it won't have credentials.
 - Never `source .env` in bash — the JSON will break the shell
 - `run_dbt.py` handles credential loading safely
 
+## Library Policy — ccef-connections first
+
+All BigQuery and external-service access in Python scripts MUST go through `ccef_connections` connectors (`BigQueryConnector`, `ActionBuilderConnector`, etc.). Do NOT use `google.cloud.bigquery`, `google.oauth2`, or other service SDKs directly. This keeps credential handling, retry logic, and connection patterns consistent across all CCEF projects.
+
+Pattern for scripts that need BQ:
+```python
+from dotenv import load_dotenv
+from ccef_connections.connectors.bigquery import BigQueryConnector
+
+load_dotenv(dotenv_path='.env')   # call before constructing any connector
+bq = BigQueryConnector(project_id='proj-tmc-mem-com')
+bq.connect()
+rows = list(bq.query("SELECT ..."))
+```
+
+The only exception is `bigquery.ScalarQueryParameter` for parameterized queries — avoid even this by inlining validated, non-user-supplied values directly into the SQL string.
+
 ## Current State
 
 - Tag updates: active and running
