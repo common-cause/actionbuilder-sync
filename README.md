@@ -34,7 +34,7 @@ cd "ActionBuilder Sync"
 Create a `.env` file in the project root:
 
 ```
-BIGQUERY_API_CREDENTIALS_PASSWORD={"type":"service_account","project_id":"proj-tmc-mem-com",...}
+BIGQUERY_CREDENTIALS_PASSWORD={"type":"service_account","project_id":"proj-tmc-mem-com",...}
 ```
 
 The value is the full contents of your service account JSON key file (on one line, no surrounding quotes).
@@ -150,8 +150,21 @@ ActionBuilder DB ──► (actionbuilder_cleaned.*) ──► current_tag_value
 ## Key Files Outside This Repo
 
 - **The sync script** — provided by The Movement Cooperative consultant; reads `actionbuilder_sync.updates_needed` and makes AB API calls. Not version-controlled here.
-- **Credentials** — stored in `.env` (gitignored). The `BIGQUERY_API_CREDENTIALS_PASSWORD` env var holds the full service account JSON.
+- **Credentials** — stored in `.env` (gitignored). The `BIGQUERY_CREDENTIALS_PASSWORD` env var holds the full service account JSON.
 - **ccef-connections library** — at `../AI Interpretation/ccef-connections`; provides BigQuery, Airtable, Zoom, Sheets, Action Network connectors. Used for any Python scripts that need to query BigQuery directly.
+
+---
+
+## BigQuery MCP (Claude Code)
+
+When working in Claude Code, the global `bigquery` MCP is available and pre-approved for this project. Use it to query views directly without leaving the conversation:
+
+```
+bq_query("SELECT * FROM actionbuilder_sync.updates_needed LIMIT 10")
+bq_list_tables("actionbuilder_sync")
+```
+
+The MCP connects to `proj-tmc-mem-com` using the shared `BIGQUERY_CREDENTIALS_PASSWORD` service account from the meta-project `.env`. No per-project credential setup is required for Claude Code queries — only `dbt` / `run_dbt.py` reads the local `.env`.
 
 ---
 
