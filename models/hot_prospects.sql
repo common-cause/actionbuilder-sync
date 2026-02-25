@@ -76,8 +76,8 @@ mobilize_activity AS (
   INNER JOIN mobilize_cleaned.cln_mobilize__participations mp
     ON aee.email_normalized = LOWER(TRIM(mp.user__email_address))
   WHERE mp.attended = True
-    AND (mp.utc_start_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 6 MONTH)
-         OR mp.utc_override_start_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 6 MONTH))
+    AND (mp.utc_start_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 183 DAY)
+         OR mp.utc_override_start_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 183 DAY))
   GROUP BY aee.entity_id
 ),
 
@@ -110,7 +110,7 @@ newmode_activity AS (
   INNER JOIN newmode_cleaned.cln_newmode__submissions nm
     ON aee.email_normalized = LOWER(TRIM(nm.contact_email))
   WHERE nm.testmode IS DISTINCT FROM TRUE
-    AND nm.utc_created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 6 MONTH)
+    AND nm.utc_created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 183 DAY)
   GROUP BY aee.entity_id
 ),
 

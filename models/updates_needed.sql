@@ -363,15 +363,28 @@ updates_to_apply AS (
     removal_ids_hot_prospect as removal_ids
   FROM value_comparisons
   WHERE hot_prospect_needs_update = TRUE
+),
+
+entity_interact_ids AS (
+  SELECT id as entity_id_int, interact_id as entity_interact_id
+  FROM actionbuilder_cleaned.cln_actionbuilder__entities
+),
+
+entity_campaign_ids AS (
+  SELECT
+    ce.entity_id,
+    STRING_AGG(c.interact_id, ',') as campaign_ids
+  FROM actionbuilder_cleaned.cln_actionbuilder__campaigns c
+  INNER JOIN actionbuilder_cleaned.cln_actionbuilder__campaigns_entities ce
+    ON c.id = ce.campaign_id
+  WHERE c.status = 'active'
+  GROUP BY ce.entity_id
 )
 
 -- Final output: only records that need updates with separate columns per field group
 SELECT
   campaign_id,
-  -- Use interact_id from entities table instead of integer id
-  (SELECT e.interact_id
-   FROM actionbuilder_cleaned.cln_actionbuilder__entities e
-   WHERE e.id = updates_to_apply.entity_id) as entity_id,
+  eii.entity_interact_id as entity_id,
   field_name,
 
   -- _tag columns: value to add (NULL when there is nothing to add)
@@ -443,14 +456,7 @@ SELECT
   current_value,
   correct_value,
 
-  -- Add comma-separated list of campaign interact_ids for this entity
-  (SELECT STRING_AGG(c.interact_id, ',')
-   FROM actionbuilder_cleaned.cln_actionbuilder__campaigns c
-   INNER JOIN actionbuilder_cleaned.cln_actionbuilder__campaigns_entities ce
-     ON c.id = ce.campaign_id
-   WHERE ce.entity_id = updates_to_apply.entity_id
-     AND c.status = 'active'
-  ) as campaign_ids,
+  eci.campaign_ids,
 
   -- Add metadata for tracking
   CURRENT_TIMESTAMP() as comparison_timestamp,
@@ -464,4 +470,6 @@ SELECT
   END as change_type
 
 FROM updates_to_apply
+LEFT JOIN entity_interact_ids eii ON eii.entity_id_int = updates_to_apply.entity_id
+LEFT JOIN entity_campaign_ids eci ON eci.entity_id = updates_to_apply.entity_id
 ORDER BY campaign_id, entity_id, field_name
