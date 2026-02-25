@@ -86,6 +86,33 @@ entity_voterbase_ids AS (
 ),
 
 -- ============================================================
+-- Step 3c: Active campaign memberships per entity (excluding Test).
+-- Two uses:
+--   (a) shared-campaign filter — only merge entities in the same campaign.
+--       Cross-campaign pairs are left in place; they may represent the same
+--       person operating across state programs.
+--   (b) entity_any_campaign — one valid campaign interact_id for API calls.
+-- ============================================================
+entity_active_campaigns AS (
+  SELECT
+    ce.entity_id,
+    c.interact_id AS campaign_interact_id
+  FROM actionbuilder_cleaned.cln_actionbuilder__campaigns_entities ce
+  INNER JOIN actionbuilder_cleaned.cln_actionbuilder__campaigns c
+    ON ce.campaign_id = c.id
+  WHERE c.status = 'active'
+    AND c.name != 'Test'
+),
+
+entity_any_campaign AS (
+  -- One deterministic campaign per entity (lexicographically first).
+  -- As of Feb 2026, all entities are in exactly one active campaign.
+  SELECT entity_id, campaign_interact_id
+  FROM entity_active_campaigns
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY campaign_interact_id) = 1
+),
+
+-- ============================================================
 -- Step 4: Combine entity base info with person_id, tag count,
 -- and test-account flag
 -- ============================================================
@@ -199,6 +226,16 @@ person_id_candidates AS (
     ON del.person_id = keep.person_id
     AND keep.rank_in_group = 1
   WHERE del.rank_in_group > 1
+    -- Only merge entities that share at least one active campaign.
+    -- Cross-state pairs (e.g. same person_id in AZ and CA) are excluded.
+    AND EXISTS (
+      SELECT 1
+      FROM entity_active_campaigns eac_del
+      INNER JOIN entity_active_campaigns eac_keep
+        ON eac_del.campaign_interact_id = eac_keep.campaign_interact_id
+      WHERE eac_del.entity_id = del.entity_id
+        AND eac_keep.entity_id = keep.entity_id
+    )
 ),
 
 -- ============================================================
@@ -232,6 +269,14 @@ name_email_candidates AS (
     AND LOWER(TRIM(COALESCE(del.last_name,  ''))) = LOWER(TRIM(COALESCE(keep.last_name,  '')))
     AND keep.rank_in_group = 1
   WHERE del.rank_in_group > 1
+    AND EXISTS (
+      SELECT 1
+      FROM entity_active_campaigns eac_del
+      INNER JOIN entity_active_campaigns eac_keep
+        ON eac_del.campaign_interact_id = eac_keep.campaign_interact_id
+      WHERE eac_del.entity_id = del.entity_id
+        AND eac_keep.entity_id = keep.entity_id
+    )
 ),
 
 -- ============================================================
@@ -312,6 +357,14 @@ voterbase_id_candidates AS (
     AND LOWER(TRIM(COALESCE(del.last_name,  ''))) = LOWER(TRIM(COALESCE(keep.last_name,  '')))
     AND LOWER(TRIM(COALESCE(del.first_name, ''))) != ''
     AND LOWER(TRIM(COALESCE(del.last_name,  ''))) != ''
+    AND EXISTS (
+      SELECT 1
+      FROM entity_active_campaigns eac_del
+      INNER JOIN entity_active_campaigns eac_keep
+        ON eac_del.campaign_interact_id = eac_keep.campaign_interact_id
+      WHERE eac_del.entity_id = del.entity_id
+        AND eac_keep.entity_id = keep.entity_id
+    )
 ),
 
 -- ============================================================
@@ -353,6 +406,14 @@ resolved_merge_candidates AS (
   WHERE dr.decision IN ('MERGE_A_INTO_B', 'MERGE_B_INTO_A')
     AND dr.delete_interact_id IS NOT NULL
     AND dr.keep_interact_id IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM entity_active_campaigns eac_del
+      INNER JOIN entity_active_campaigns eac_keep
+        ON eac_del.campaign_interact_id = eac_keep.campaign_interact_id
+      WHERE eac_del.entity_id = del_e.id
+        AND eac_keep.entity_id = keep_e.id
+    )
 )
 
 -- ============================================================
@@ -374,7 +435,17 @@ SELECT
   keep_tag_count,
   delete_created_date,
   keep_created_date,
-  group_size
+  group_size,
+
+  -- Campaign interact_id to use for the remove_records API call.
+  -- Any active non-Test campaign the delete entity belongs to.
+  -- NULL if the entity has no active non-Test campaign (cannot be API-deleted in this run).
+  (
+    SELECT MIN(eac.campaign_interact_id)
+    FROM actionbuilder_cleaned.cln_actionbuilder__entities del_e
+    INNER JOIN entity_active_campaigns eac ON eac.entity_id = del_e.id
+    WHERE del_e.interact_id = delete_interact_id
+  ) AS campaign_interact_id
 
 FROM (
   SELECT *, ROW_NUMBER() OVER (PARTITION BY delete_interact_id ORDER BY

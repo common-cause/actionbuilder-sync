@@ -9,6 +9,9 @@ WITH correct_values AS (
     state_actions_6_months,
     top_state_action_taker_value,
     phone_bank_calls_made,
+    newmode_actions,
+    newmode_actions_value,
+    top_national_action_taker_value,
     events_attended_past_6_months_value,
     most_recent_event_attended_value,
     first_event_attended_value,
@@ -21,9 +24,17 @@ WITH correct_values AS (
     action_network_6mo_sync_string,
     state_actions_6mo_sync_string,
     top_state_action_taker_sync_string,
-    phone_calls_sync_string
+    phone_calls_sync_string,
+    newmode_actions_sync_string,
+    top_national_action_taker_sync_string
   FROM {{ ref('correct_participation_values') }}
   WHERE has_participation_data = TRUE  -- Only entities with actual participation data
+),
+
+hot_prospect_entities AS (
+  -- Entities currently on the Hot Prospect list (top 10 per campaign)
+  SELECT DISTINCT entity_id
+  FROM {{ ref('hot_prospects') }}
 ),
 
 current_ab_values AS (
@@ -42,7 +53,10 @@ current_ab_values AS (
     'Action Network Actions',
     'Action Network State Actions',
     'Top State Action Taker',
-    'Phone Bank Calls Made'
+    'Phone Bank Calls Made',
+    'NewMode Actions',
+    'Top National Action Network Activist',
+    'Hot Prospect'
   )
 ),
 
@@ -52,22 +66,28 @@ pivot_current_values AS (
   SELECT
     entity_id,
     campaign_id,
-    MAX(CASE WHEN tag_name = 'Events Attended Past 6 Months' THEN current_value END) as current_events_6mo,
-    MAX(CASE WHEN tag_name = 'Most Recent Event Attended'    THEN current_value END) as current_recent_event,
-    MAX(CASE WHEN tag_name = 'First Event Attended'          THEN current_value END) as current_first_event,
-    MAX(CASE WHEN tag_name = 'Action Network Actions'        THEN current_value END) as current_action_network,
-    MAX(CASE WHEN tag_name = 'Action Network State Actions'  THEN current_value END) as current_state_actions,
-    MAX(CASE WHEN tag_name = 'Top State Action Taker'        THEN current_value END) as current_top_state_performer,
-    MAX(CASE WHEN tag_name = 'Phone Bank Calls Made'         THEN current_value END) as current_phone_calls,
+    MAX(CASE WHEN tag_name = 'Events Attended Past 6 Months'       THEN current_value END) as current_events_6mo,
+    MAX(CASE WHEN tag_name = 'Most Recent Event Attended'           THEN current_value END) as current_recent_event,
+    MAX(CASE WHEN tag_name = 'First Event Attended'                 THEN current_value END) as current_first_event,
+    MAX(CASE WHEN tag_name = 'Action Network Actions'               THEN current_value END) as current_action_network,
+    MAX(CASE WHEN tag_name = 'Action Network State Actions'         THEN current_value END) as current_state_actions,
+    MAX(CASE WHEN tag_name = 'Top State Action Taker'               THEN current_value END) as current_top_state_performer,
+    MAX(CASE WHEN tag_name = 'Phone Bank Calls Made'                THEN current_value END) as current_phone_calls,
+    MAX(CASE WHEN tag_name = 'NewMode Actions'                      THEN current_value END) as current_newmode_actions,
+    MAX(CASE WHEN tag_name = 'Top National Action Network Activist' THEN current_value END) as current_national_top,
+    MAX(CASE WHEN tag_name = 'Hot Prospect'                         THEN current_value END) as current_hot_prospect,
 
     -- Removal strings: tag-interact-id:|:tagging-interact-id
-    MAX(CASE WHEN tag_name = 'Events Attended Past 6 Months' THEN removal_string END) as removal_ids_events_6mo,
-    MAX(CASE WHEN tag_name = 'Most Recent Event Attended'    THEN removal_string END) as removal_ids_recent_event,
-    MAX(CASE WHEN tag_name = 'First Event Attended'          THEN removal_string END) as removal_ids_first_event,
-    MAX(CASE WHEN tag_name = 'Action Network Actions'        THEN removal_string END) as removal_ids_action_network,
-    MAX(CASE WHEN tag_name = 'Action Network State Actions'  THEN removal_string END) as removal_ids_state_actions,
-    MAX(CASE WHEN tag_name = 'Top State Action Taker'        THEN removal_string END) as removal_ids_top_state_performer,
-    MAX(CASE WHEN tag_name = 'Phone Bank Calls Made'         THEN removal_string END) as removal_ids_phone_calls
+    MAX(CASE WHEN tag_name = 'Events Attended Past 6 Months'       THEN removal_string END) as removal_ids_events_6mo,
+    MAX(CASE WHEN tag_name = 'Most Recent Event Attended'           THEN removal_string END) as removal_ids_recent_event,
+    MAX(CASE WHEN tag_name = 'First Event Attended'                 THEN removal_string END) as removal_ids_first_event,
+    MAX(CASE WHEN tag_name = 'Action Network Actions'               THEN removal_string END) as removal_ids_action_network,
+    MAX(CASE WHEN tag_name = 'Action Network State Actions'         THEN removal_string END) as removal_ids_state_actions,
+    MAX(CASE WHEN tag_name = 'Top State Action Taker'               THEN removal_string END) as removal_ids_top_state_performer,
+    MAX(CASE WHEN tag_name = 'Phone Bank Calls Made'                THEN removal_string END) as removal_ids_phone_calls,
+    MAX(CASE WHEN tag_name = 'NewMode Actions'                      THEN removal_string END) as removal_ids_newmode_actions,
+    MAX(CASE WHEN tag_name = 'Top National Action Network Activist' THEN removal_string END) as removal_ids_national_top,
+    MAX(CASE WHEN tag_name = 'Hot Prospect'                         THEN removal_string END) as removal_ids_hot_prospect
   FROM current_ab_values
   GROUP BY entity_id, campaign_id
 ),
@@ -98,6 +118,9 @@ value_comparisons AS (
     COALESCE(pcv.current_state_actions, '0')        as current_state_actions,
     COALESCE(pcv.current_top_state_performer, '')   as current_top_state_performer,
     COALESCE(pcv.current_phone_calls, '0')          as current_phone_calls,
+    COALESCE(pcv.current_newmode_actions, '0')      as current_newmode_actions,
+    COALESCE(pcv.current_national_top, '')          as current_national_top,
+    COALESCE(pcv.current_hot_prospect, '')          as current_hot_prospect,
 
     -- Correct values from external data
     cv.events_attended_past_6_months_value          as correct_events_6mo,
@@ -107,6 +130,10 @@ value_comparisons AS (
     cv.state_actions_6mo_value                      as correct_state_actions,
     COALESCE(cv.top_state_action_taker_value, '')   as correct_top_state_performer,
     cv.phone_bank_calls_made_value                  as correct_phone_calls,
+    cv.newmode_actions_value                        as correct_newmode_actions,
+    COALESCE(cv.top_national_action_taker_value, '') as correct_national_top,
+    -- Hot prospect correct value: 'Hot Prospect' if on list, '' if not
+    CASE WHEN hp.entity_id IS NOT NULL THEN 'Hot Prospect' ELSE '' END as correct_hot_prospect,
 
     -- Sync strings for updates
     cv.events_6mo_sync_string,
@@ -116,6 +143,13 @@ value_comparisons AS (
     cv.state_actions_6mo_sync_string,
     cv.top_state_action_taker_sync_string,
     cv.phone_calls_sync_string,
+    cv.newmode_actions_sync_string,
+    cv.top_national_action_taker_sync_string,
+    -- Hot prospect sync string is built here (not stored in correct_participation_values)
+    CASE WHEN hp.entity_id IS NOT NULL
+      THEN 'Engagement:|:Prospect Identification:|:Hot Prospect:|:standard_response:Hot Prospect'
+      ELSE NULL
+    END as hot_prospect_sync_string,
 
     -- Removal strings (NULL when there is no existing value to remove)
     pcv.removal_ids_events_6mo,
@@ -125,6 +159,9 @@ value_comparisons AS (
     pcv.removal_ids_state_actions,
     pcv.removal_ids_top_state_performer,
     pcv.removal_ids_phone_calls,
+    pcv.removal_ids_newmode_actions,
+    pcv.removal_ids_national_top,
+    pcv.removal_ids_hot_prospect,
 
     -- Identify which fields need updates
     CASE
@@ -160,7 +197,22 @@ value_comparisons AS (
     CASE
       WHEN COALESCE(pcv.current_phone_calls, '0') != cv.phone_bank_calls_made_value
       THEN TRUE ELSE FALSE
-    END as phone_calls_needs_update
+    END as phone_calls_needs_update,
+
+    CASE
+      WHEN COALESCE(pcv.current_newmode_actions, '0') != cv.newmode_actions_value
+      THEN TRUE ELSE FALSE
+    END as newmode_needs_update,
+
+    CASE
+      WHEN COALESCE(pcv.current_national_top, '') != COALESCE(cv.top_national_action_taker_value, '')
+      THEN TRUE ELSE FALSE
+    END as national_top_needs_update,
+
+    CASE
+      WHEN COALESCE(pcv.current_hot_prospect, '') != (CASE WHEN hp.entity_id IS NOT NULL THEN 'Hot Prospect' ELSE '' END)
+      THEN TRUE ELSE FALSE
+    END as hot_prospect_needs_update
 
   FROM correct_values cv
   INNER JOIN entities_in_active_campaigns eac
@@ -168,6 +220,8 @@ value_comparisons AS (
   LEFT JOIN pivot_current_values pcv
     ON cv.entity_id = pcv.entity_id
     AND eac.campaign_id = pcv.campaign_id
+  LEFT JOIN hot_prospect_entities hp
+    ON cv.entity_id = hp.entity_id
 ),
 
 updates_to_apply AS (
@@ -267,6 +321,48 @@ updates_to_apply AS (
     removal_ids_phone_calls as removal_ids
   FROM value_comparisons
   WHERE phone_calls_needs_update = TRUE
+
+  UNION ALL
+
+  SELECT
+    campaign_id,
+    entity_id,
+    'NewMode Actions' as field_name,
+    'Online Actions Past 6 Months' as field_group,
+    newmode_actions_sync_string as sync_string,
+    current_newmode_actions as current_value,
+    correct_newmode_actions as correct_value,
+    removal_ids_newmode_actions as removal_ids
+  FROM value_comparisons
+  WHERE newmode_needs_update = TRUE
+
+  UNION ALL
+
+  SELECT
+    campaign_id,
+    entity_id,
+    'Top National Action Network Activist' as field_name,
+    'National Online Actions' as field_group,
+    top_national_action_taker_sync_string as sync_string,
+    current_national_top as current_value,
+    correct_national_top as correct_value,
+    removal_ids_national_top as removal_ids
+  FROM value_comparisons
+  WHERE national_top_needs_update = TRUE
+
+  UNION ALL
+
+  SELECT
+    campaign_id,
+    entity_id,
+    'Hot Prospect' as field_name,
+    'Prospect Engagement' as field_group,
+    hot_prospect_sync_string as sync_string,
+    current_hot_prospect as current_value,
+    correct_hot_prospect as correct_value,
+    removal_ids_hot_prospect as removal_ids
+  FROM value_comparisons
+  WHERE hot_prospect_needs_update = TRUE
 )
 
 -- Final output: only records that need updates with separate columns per field group
@@ -299,6 +395,16 @@ SELECT
     THEN sync_string
     ELSE NULL
   END as state_online_actions_tag,
+  CASE
+    WHEN field_group = 'National Online Actions' AND correct_value != ''
+    THEN sync_string
+    ELSE NULL
+  END as national_online_actions_tag,
+  CASE
+    WHEN field_group = 'Prospect Engagement' AND correct_value != ''
+    THEN sync_string
+    ELSE NULL
+  END as engagement_tag,
 
   -- _tag_remove columns: existing tagging to delete before adding new value
   -- Format: tag-interact-id:|:tagging-interact-id
@@ -323,6 +429,16 @@ SELECT
     THEN removal_ids
     ELSE NULL
   END as state_online_actions_tag_remove,
+  CASE
+    WHEN field_group = 'National Online Actions' AND current_value != ''
+    THEN removal_ids
+    ELSE NULL
+  END as national_online_actions_tag_remove,
+  CASE
+    WHEN field_group = 'Prospect Engagement' AND current_value != ''
+    THEN removal_ids
+    ELSE NULL
+  END as engagement_tag_remove,
 
   current_value,
   correct_value,

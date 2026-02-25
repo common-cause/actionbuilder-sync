@@ -40,9 +40,25 @@
 --      - Held-out new records in deduplicated_names_to_load are unblocked
 
 -- ============================================================
+-- Campaign memberships per entity (excluding Test).
+-- Used to filter out cross-campaign pairs: two entities in different
+-- state campaigns are not considered ambiguous duplicates.
+-- ============================================================
+WITH entity_active_campaigns AS (
+  SELECT
+    ce.entity_id,
+    c.interact_id AS campaign_interact_id
+  FROM actionbuilder_cleaned.cln_actionbuilder__campaigns_entities ce
+  INNER JOIN actionbuilder_cleaned.cln_actionbuilder__campaigns c
+    ON ce.campaign_id = c.id
+  WHERE c.status = 'active'
+    AND c.name != 'Test'
+),
+
+-- ============================================================
 -- Entity base info — primary email, primary phone, tags, person_id, voterbase_id
 -- ============================================================
-WITH primary_emails AS (
+primary_emails AS (
   SELECT
     owner_id AS entity_id,
     email,
@@ -187,6 +203,16 @@ voterbase_pair_ids AS (
     -- Only pairs where full name is NOT exactly equal
     AND NOT (ea.fn_norm = eb.fn_norm AND ea.ln_norm = eb.ln_norm)
   WHERE ea.voterbase_id IS NOT NULL
+    -- Exclude cross-campaign pairs: entities in different state campaigns
+    -- are not considered ambiguous duplicates.
+    AND EXISTS (
+      SELECT 1
+      FROM entity_active_campaigns eac_a
+      INNER JOIN entity_active_campaigns eac_b
+        ON eac_a.campaign_interact_id = eac_b.campaign_interact_id
+      WHERE eac_a.entity_id = ea.entity_id
+        AND eac_b.entity_id = eb.entity_id
+    )
 ),
 
 voterbase_signal AS (
@@ -238,6 +264,15 @@ phone_pair_ids AS (
   JOIN entities_enriched eb ON pB.entity_id = eb.entity_id
   WHERE ea.ln_norm != ''
     AND ea.ln_norm = eb.ln_norm
+    -- Exclude cross-campaign pairs.
+    AND EXISTS (
+      SELECT 1
+      FROM entity_active_campaigns eac_a
+      INNER JOIN entity_active_campaigns eac_b
+        ON eac_a.campaign_interact_id = eac_b.campaign_interact_id
+      WHERE eac_a.entity_id = ea.entity_id
+        AND eac_b.entity_id = eb.entity_id
+    )
 ),
 
 phone_signal AS (

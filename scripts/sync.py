@@ -8,6 +8,7 @@ Operations:
     remove_records      Delete duplicate entities (reads dedup_candidates)
     prepare_email_data  Add secondary emails to keeper entities (reads email_migration_needed)
     prepare_phone_data  Add secondary phones to keeper entities (reads phone_migration_needed)
+    apply_assessments   Write auto-assessment levels to entities (reads auto_assessment_rules)
 
 Usage:
     python scripts/sync.py <operation> [--campaign CAMPAIGN_ID] [--dry-run] [--limit N]
@@ -80,6 +81,8 @@ TAG_COLS = [
     'event_participation_summary_tag',
     'online_actions_past_6_months_tag',
     'state_online_actions_tag',
+    'national_online_actions_tag',
+    'engagement_tag',
 ]
 REMOVE_COLS = [c + '_remove' for c in TAG_COLS]
 
@@ -187,7 +190,7 @@ def _query(bq: BigQueryConnector, sql: str) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def _get_campaign_map(bq: bigquery.Client) -> Dict[str, str]:
+def _get_campaign_map(bq: BigQueryConnector) -> Dict[str, str]:
     """
     Return a dict mapping both:
       - campaign integer id (as string) -> interact_id UUID
@@ -672,6 +675,78 @@ def prepare_phone_data(
     logger.info(f'prepare_phone_data: done. ok={n_ok} err={n_err} skipped={n_skip}')
 
 
+def apply_assessments(
+    bq: BigQueryConnector,
+    ab: Optional[ActionBuilderConnector],
+    campaign_filter: Optional[str],
+    dry_run: bool,
+    limit: Optional[int],
+) -> None:
+    """
+    Write automated assessment levels to ActionBuilder entities.
+
+    Reads actionbuilder_sync.auto_assessment_rules. The view enforces the
+    write policy (no existing assessment, level 0, or level 1 set by the
+    API user) and only emits upgrade candidates. For each row, calls
+    update_person to set action_builder:latest_assessment.
+    """
+    logger.info('apply_assessments: fetching rows from auto_assessment_rules...')
+    sql = (
+        f'SELECT entity_interact_id, campaign_interact_id, suggested_level, '
+        f'qualification_reason '
+        f'FROM `{BQ_PROJECT}.{BQ_DATASET}.auto_assessment_rules`'
+    )
+    if limit:
+        sql += f' LIMIT {limit}'
+    rows = _query(bq, sql)
+
+    if not rows:
+        logger.info('apply_assessments: no entities to assess')
+        return
+
+    logger.info(f'apply_assessments: {len(rows)} entities to consider')
+    n_ok = n_err = n_skip = 0
+
+    for row in rows:
+        entity_id = str(row['entity_interact_id'])
+        campaign_id = row.get('campaign_interact_id')
+        level = row.get('suggested_level')
+        reason = row.get('qualification_reason', 'unknown')
+        label = (
+            f'entity={entity_id[:8]}... '
+            f'campaign={str(campaign_id)[:8]}... '
+            f'level={level} ({reason})'
+        )
+
+        if not campaign_id:
+            logger.warning(f'  Skipping {label}: no campaign')
+            n_skip += 1
+            continue
+
+        if campaign_filter and str(campaign_id) != campaign_filter:
+            n_skip += 1
+            continue
+
+        if dry_run:
+            logger.info(f'  [DRY-RUN] Would assess {label}')
+            n_ok += 1
+            continue
+
+        try:
+            ab.update_person(
+                str(campaign_id),
+                entity_id,
+                {'action_builder:latest_assessment': level},
+            )
+            logger.debug(f'  Assessed {label}')
+            n_ok += 1
+        except Exception as e:
+            logger.error(f'  ERROR assessing {label}: {e}')
+            n_err += 1
+
+    logger.info(f'apply_assessments: done. ok={n_ok} err={n_err} skipped={n_skip}')
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -682,6 +757,7 @@ OPERATIONS = {
     'remove_records': remove_records,
     'prepare_email_data': prepare_email_data,
     'prepare_phone_data': prepare_phone_data,
+    'apply_assessments': apply_assessments,
 }
 
 

@@ -1,0 +1,14 @@
+version: 2
+
+seeds:
+
+  - name: state_an_thresholds
+    description: >
+      Per-state minimum Action Network action threshold for load qualification
+      in master_load_qualifiers. States not listed default to 20 via COALESCE.
+      Overrides: Michigan=5, Nebraska=5 (smaller state programs need a lower bar).
+    columns:
+      - name: state
+        description: Full state name (e.g. "Michigan") — matches cln_actionnetwork__core_fields.state.
+      - name: min_an_actions_6m
+        description: Minimum 6-month AN actions required to qualify for AB inclusion.

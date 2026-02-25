@@ -73,21 +73,58 @@ models:
 
   - name: state_action_network_top_performers
     description: >
-      Action Network state-level actions aggregated by email, identifying
-      top state action takers for the "Action Network State Actions" and
-      "Top State Action Taker" fields in ActionBuilder.
+      Action Network state-level actions aggregated by email. Ranks users
+      within each state by 6-month action count; top 50 per state receive the
+      "Top State Action Taker" standard tag in ActionBuilder.
     columns:
       - name: email_normalized
         description: Lowercased, trimmed email address — join key.
         tests:
           - not_null
           - unique
+      - name: residence_state
+        description: State of residence from Action Network core fields.
       - name: state_actions_6_months
         description: Count of state-targeted AN actions in the past 6 months.
+      - name: action_rank
+        description: Rank within the user's state (1 = most active in that state).
       - name: top_state_action_taker
         description: >
-          Boolean flag — TRUE if this person is among the top state action takers.
+          Boolean flag — TRUE if rank <= 50 within their state of residence.
           When TRUE, triggers the "Top State Action Taker" standard tag in AB.
+
+  - name: action_network_national_top_performers
+    description: >
+      Top 50 Action Network activists nationally, ranked by total 6-month
+      action count across all AN action types. Used to populate the "Top
+      National Action Network Activist" standard tag in ActionBuilder.
+    columns:
+      - name: email_normalized
+        description: Lowercased, trimmed email address — join key to AB entities.
+        tests:
+          - not_null
+          - unique
+      - name: total_actions_6_months
+        description: Total AN actions in the past 6 months.
+      - name: national_rank
+        description: National rank (1 = most active nationally).
+      - name: top_national_action_taker
+        description: Always TRUE (only top-50 rows are included in this view).
+
+  - name: newmode_actions
+    description: >
+      NewMode form submissions aggregated by email address. All-time count
+      (not filtered to 6 months). Used to populate the "NewMode Actions"
+      number field in ActionBuilder and as a load qualifier in
+      master_load_qualifiers. Will be empty until NewMode data flows.
+    columns:
+      - name: email_normalized
+        description: Lowercased, trimmed email address — join key to AB entities.
+        tests:
+          - not_null
+          - unique
+      - name: newmode_submission_count
+        description: Total distinct NewMode submissions from this email (all-time).
 
   # ── Core Sync Pipeline ───────────────────────────────────────────────────────
 
@@ -189,7 +226,7 @@ models:
       Five tiers:
         person_id_match    -- Two entities resolve to the same core_enhanced
                              person_id via primary email. Keep the entity with
-                             the most tags (tiebreak: oldest). ~341 deletions.
+                             the most tags (tiebreak: oldest).
         name_email_match   -- Same first+last+email, no person_id match.
                              Fallback for unmatched entities.
         test_account       -- Gmail plus-alias accounts (foo+bar@gmail.com).
@@ -200,12 +237,19 @@ models:
         resolved_merge     -- MERGE decisions written to dedup_resolutions by
                              human or AI review of dedup_unresolved pairs.
 
+      CAMPAIGN FILTER: For all tiers with a keeper (person_id_match,
+      name_email_match, voterbase_id_match, resolved_merge), only pairs where
+      both entities share at least one active non-Test campaign are included.
+      Cross-campaign pairs (e.g. same person_id in AZ and CA campaigns) are
+      NOT merged -- they represent the same person in different state programs.
+      The test_account tier is unaffected (no keeper, deleted regardless).
+
       IMPORTANT: When keep_interact_id IS NULL (test_account tier), delete the
       entity with no redirect. When keep_interact_id is populated, ensure any
       references (e.g. in the sync job) use keep_interact_id going forward.
 
-      Base count ~374 entities (Feb 2026); grows as voterbase_id_match and
-      resolved_merge tiers are populated via the resolution workflow.
+      campaign_interact_id is provided for the remove_records API call (any
+      valid active campaign the delete entity belongs to).
     columns:
       - name: delete_interact_id
         description: >
@@ -235,6 +279,11 @@ models:
         description: Date the canonical entity was created. NULL for test_account tier.
       - name: group_size
         description: Total number of entities (keep + delete) in this duplicate group.
+      - name: campaign_interact_id
+        description: >
+          The 36-char interact_id of a valid active campaign for the delete entity.
+          Used by the remove_records sync operation for the delete_person API call.
+          NULL if the entity has no active non-Test campaign.
 
   - name: dedup_ambiguous
     description: >
@@ -319,7 +368,9 @@ models:
         - EP shifts in 2024
         - Mobilize events attended in past 12 months
         - ScaleToWin phone bank participation
-        - Action Network (20+ actions in past 6 months)
+        - Action Network (threshold from state_an_thresholds seed; default 20,
+          MI/NE = 5 actions in past 6 months)
+        - NewMode (any submission = qualifies)
     columns:
       - name: person_id
         description: >
@@ -368,6 +419,11 @@ models:
           - not_null
       - name: dedup_tier
         description: Which dedup_candidates tier identified this pair.
+      - name: campaign_interact_id
+        description: >
+          The 36-char interact_id of an active campaign for the keeper entity.
+          Used by the prepare_phone_data sync operation for the update_person API call.
+          NULL if the keeper has no active non-Test campaign (should not occur in practice).
       - name: phone_to_add
         description: >
           The phone number string as stored in AB (including country code prefix if
@@ -407,6 +463,11 @@ models:
           - not_null
       - name: dedup_tier
         description: Which dedup_candidates tier identified this pair (person_id_match or name_email_match).
+      - name: campaign_interact_id
+        description: >
+          The 36-char interact_id of an active campaign for the keeper entity.
+          Used by the prepare_email_data sync operation for the update_person API call.
+          NULL if the keeper has no active non-Test campaign (should not occur in practice).
       - name: email_to_add
         description: The email address to add as a secondary email on the keeper entity.
         tests:
@@ -470,8 +531,57 @@ models:
         description: Two-letter state abbreviation (required; records without are excluded).
         tests:
           - not_null
+      - name: campaign_interact_id
+        description: >
+          The 36-char interact_id of the AB campaign to add this entity to.
+          Derived from the entity's state (state abbreviation -> campaign name -> interact_id).
+          Records in states with no active AB campaign are excluded from this view.
+          Used by insert_new_records for the insert_entity API call.
+        tests:
+          - not_null
 
   # ── Diagnostics ──────────────────────────────────────────────────────────────
+
+  - name: test_campaign_updates
+    description: >
+      Filtered view of updates_needed for the Test campaign only
+      (interact_id 0e41ca37-e05d-499c-943b-9d08dc8725b0). One row per
+      (entity, field) needing an update. Joins in first_name, last_name,
+      and primary_email for easy human identification. Use this to verify
+      what sync.py update_records will do before running it live.
+    columns:
+      - name: entity_id
+        description: The 36-char interact_id of the entity to update.
+        tests:
+          - not_null
+      - name: field_name
+        description: Which participation field needs updating.
+      - name: change_type
+        description: New Value, Update Value, or Clear Value.
+      - name: current_value
+        description: Current value in ActionBuilder.
+      - name: correct_value
+        description: Correct value from external platform data.
+      - name: primary_email
+        description: Entity's primary email address (for identification).
+
+  - name: test_campaign_update_summary
+    description: >
+      Summary of pending updates for the Test campaign, grouped by field
+      and change type. Provides entity counts plus min/max/avg-delta
+      for numeric fields (date fields show counts only). Use as a
+      quick sanity-check dashboard before running the live sync.
+    columns:
+      - name: field_name
+        description: Which participation field.
+      - name: change_type
+        description: New Value, Update Value, or Clear Value.
+      - name: entity_count
+        description: Number of distinct entities needing this update type.
+      - name: avg_abs_delta
+        description: >
+          Average absolute difference between current and correct values
+          for numeric fields. NULL for date fields.
 
   - name: entity_lookup_debug
     description: >
@@ -516,3 +626,69 @@ models:
         description: TRUE if this entity's person_id appears in Mobilize participation data.
       - name: has_scaletowin_data
         description: TRUE if this entity's person_id appears in ScaleToWin call data.
+
+  # ── Engagement & Assessment ───────────────────────────────────────────────────
+
+  - name: hot_prospects
+    description: >
+      Top 10 highest-activity AB entities per active non-Test campaign who
+      haven't been called in the past 30 days and haven't been assessed at
+      level 2+. Intended for organizer outreach prioritization.
+
+      Activity scoring = sum of Mobilize events (6mo) + AN actions (6mo)
+      + ScaleToWin calls (all-time) + NewMode submissions (6mo).
+
+      Feeds into updates_needed to add/remove the "Hot Prospect" standard tag
+      in the Engagement section. When an entity falls off the list, the tag
+      is automatically removed on the next update_records run.
+    columns:
+      - name: entity_id
+        description: ActionBuilder internal numeric entity ID.
+        tests:
+          - not_null
+      - name: campaign_interact_id
+        description: The 36-char interact_id of the entity's active campaign.
+      - name: total_activity_score
+        description: Sum of all activity signals used for ranking.
+      - name: prospect_rank
+        description: Rank within campaign (1 = most active). Only ranks 1-10 are included.
+      - name: hot_prospect_value
+        description: Always 'Hot Prospect' (used as the standard_response value in AB).
+
+  - name: auto_assessment_rules
+    description: >
+      Automated assessment level recommendations for AB entities, applying
+      the following write policy:
+        - Only entities with no assessment, level 0, or level 1 from
+          created_by_id=3 (Rob/API) are included.
+        - Only upgrades (suggested_level > current_level) are emitted.
+        - Entities where a human organizer set level >= 1 are excluded.
+
+      Level 1 criteria (any one of): any Mobilize attendance, any NewMode
+      submission, any ScaleToWin call, or 20+ AN actions in past 6 months.
+
+      Level 2 criteria (any one of): 2+ ScaleToWin calls, 2+ digital
+      Mobilize attendances (all-time), or any in-person Common Cause
+      Mobilize event (organization_id = 6600).
+
+      Sync operation: apply_assessments in scripts/sync.py
+      API: PUT /campaigns/{campaign_id}/people/{entity_id} with
+      {"person": {"action_builder:latest_assessment": level}}
+    columns:
+      - name: entity_interact_id
+        description: The 36-char interact_id of the entity to assess.
+        tests:
+          - not_null
+          - unique
+      - name: campaign_interact_id
+        description: The 36-char interact_id of the entity's active non-Test campaign.
+        tests:
+          - not_null
+      - name: current_level
+        description: The entity's current assessment level (NULL if no assessment exists).
+      - name: suggested_level
+        description: The recommended assessment level (1 or 2). Always 1 or 2 by construction.
+        tests:
+          - not_null
+      - name: qualification_reason
+        description: Human-readable string describing the most specific criterion that triggered this level.

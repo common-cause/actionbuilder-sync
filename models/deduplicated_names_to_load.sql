@@ -39,11 +39,29 @@
 --   5. Use this view as the new-record insertion feed (insert_new_records)
 
 -- ============================================================
+-- State → campaign mapping
+-- Maps each US state abbreviation to its active AB campaign.
+-- Records in states with no campaign are excluded from new inserts.
+-- Campaign names match state full names exactly (e.g., "Arizona" -> "AZ").
+-- Test campaign is excluded.
+-- ============================================================
+WITH state_campaign_map AS (
+  SELECT
+    s.abbreviation      AS state,
+    c.interact_id       AS campaign_interact_id
+  FROM actionnetwork_views.states s
+  INNER JOIN actionbuilder_cleaned.cln_actionbuilder__campaigns c
+    ON c.name = s.name
+  WHERE c.status = 'active'
+    AND c.name != 'Test'
+),
+
+-- ============================================================
 -- Layer 1: Build AB exclusion sets
 -- These reflect the full consolidated contact sets, including any secondary
 -- emails/phones migrated from deleted entities to keeper entities.
 -- ============================================================
-WITH ab_emails AS (
+ab_emails AS (
   -- Every email address currently on any AB entity
   SELECT LOWER(TRIM(email)) AS email_norm
   FROM actionbuilder_cleaned.cln_actionbuilder__emails
@@ -136,14 +154,20 @@ base_qualified AS (
     mlq.mr_event_field,
     mlq.first_event_date,
     mlq.mr_event_date,
-    mlq.qualification_count
+    mlq.qualification_count,
+    scm.campaign_interact_id              -- AB campaign for insert_new_records API call
 
   FROM {{ ref('master_load_qualifiers') }} mlq
   LEFT JOIN actionnetwork_views.states s
     ON mlq.state = s.name OR mlq.state = s.abbreviation
+  LEFT JOIN state_campaign_map scm
+    ON s.abbreviation = scm.state
 
   WHERE (mlq.email IS NOT NULL OR mlq.phone_number IS NOT NULL)
     AND s.abbreviation IS NOT NULL
+    -- Exclude states with no active AB campaign (other US states, international).
+    -- Only insert records where we have a campaign to add them to.
+    AND scm.campaign_interact_id IS NOT NULL
 
     -- Exclude by person_id: covers all emails the identity hub has ever seen
     -- for this person, including across multiple source platforms.
@@ -306,6 +330,7 @@ SELECT
   phone_number,
   email,
   state,
+  campaign_interact_id,
   county,
   zip_code,
   source_code,
@@ -326,7 +351,8 @@ SELECT
 FROM name_phone_deduped
 
 GROUP BY
-  first_name, last_name, phone_number, email, state, county, zip_code, source_code,
+  first_name, last_name, phone_number, email, state, campaign_interact_id,
+  county, zip_code, source_code,
   shifted_2024, events_6m, phone_bank_dials,
   action_network_field, events_field, pb_field, first_event_field, mr_event_field,
   first_event_date, mr_event_date

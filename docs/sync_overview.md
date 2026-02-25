@@ -4,38 +4,28 @@
 
 This project calculates participation values for people in ActionBuilder from external platforms (Mobilize, Action Network, ScaleToWin, EP Archive) and pushes those values into ActionBuilder as tag responses via a custom sync job. It runs entirely in BigQuery as a set of dbt views.
 
-**Current status:** Updating tag values on existing records only. New record insertion is built but not yet active — `dedup_candidates` view is ready; AB API deletions not yet executed.
+**Current status:** `update_records` fully operational — test campaign synced successfully (Feb 2026). Dedup execution is the next step before Wisconsin campaign full run.
 
 ---
 
 ## The Sync Job
 
-The sync job is a custom script written by a Movement Cooperative consultant. It is a proprietary wrapper on top of the [Parsons ActionBuilder library](https://github.com/move-coop/parsons/blob/main/parsons/action_builder/action_builder.py). It reads a BigQuery view and makes API calls to ActionBuilder. Key characteristics:
+The sync job is `scripts/sync.py` in this repository. It replaces the original TMC consultant script, which was a proprietary wrapper around the [Parsons ActionBuilder library](https://github.com/move-coop/parsons/blob/main/parsons/action_builder/action_builder.py). Our script uses the `ActionBuilderConnector` from `ccef-connections` and makes direct OSDI API calls.
 
-- **Input:** A BigQuery table/view pointed at by configuration, plus an operation name
-- **Authentication:** ActionBuilder OSDI API token
-- **Rate limit:** 4 calls/second, no batch endpoint
-- **Documentation:** Full README and column format specs requested from TMC consultant (pending as of Feb 2026)
+- **Input:** BigQuery views in `actionbuilder_sync` dataset
+- **Authentication:** `ACTION_BUILDER_CREDENTIALS_PASSWORD` env var — JSON `{"api_token": "...", "subdomain": "..."}`
+- **Rate limit:** AB API is approximately 4 calls/second; no batch endpoint
+- **CLI:** `python scripts/sync.py <operation> [--campaign UUID] [--dry-run] [--limit N]`
 
-### Known Operations
+### Operations
 
-The script supports at minimum these operation modes (exact input column names pending confirmation):
-
-| Operation | Purpose |
-|---|---|
-| `update_records` | Update tag values on existing entities — **currently in use** |
-| `insert_new_records` | Create new entity records |
-| `upsert_records` | Create or update |
-| `remove_records` | Remove/deactivate entities |
-| `prepare_email_data` | Add secondary email addresses to existing entities |
-| `prepare_phone_data` | Add secondary phone numbers to existing entities |
-| `prepare_address_data` | Add/update postal addresses |
-| `get_entity_ids_using_email` | Look up entity IDs by email (likely a pre-step for other operations) |
-| `get_entity_ids_using_tags` | Look up entity IDs by tag |
-| `connect_records` | Create connections between entities |
-| `deactivate_connections` | Deactivate existing connections |
-
-> **Open question:** Does `remove_records` hard-delete entities or only deactivate campaign membership? The underlying Parsons method (`remove_entity_record_from_campaign`) suggests the latter. Confirm with consultant before executing dedup deletions.
+| Operation | BQ input view | Purpose |
+|---|---|---|
+| `update_records` | `updates_needed` | Update tag values on existing entities — **operational** |
+| `insert_new_records` | `deduplicated_names_to_load` | Create new entities — built, not yet active |
+| `remove_records` | `dedup_candidates` | Hard-delete duplicate entities via `DELETE /people/{id}` |
+| `prepare_email_data` | `email_migration_needed` | Add secondary emails to keeper entities before dedup deletion |
+| `prepare_phone_data` | `phone_migration_needed` | Add secondary phones to keeper entities before dedup deletion |
 
 ### Output Table Format (`updates_needed`)
 
@@ -78,7 +68,7 @@ Non-standard tag types (anything other than Standard) always require the fourth 
 
 ### Tag Removal Format
 
-To remove an existing tag value before setting a new one:
+To remove an existing tag value before setting a new one, `current_tag_values` exposes a `removal_string`:
 
 ```
 tag-interact-id-from-tags-table:|:tagging-interact-id-from-taggable-logbook
@@ -88,7 +78,45 @@ Both IDs are 36-char UUIDs from ActionBuilder's own database:
 - First ID: `interact_id` from `actionbuilder_cleaned.cln_actionbuilder__tags` for that specific field
 - Second ID: `interact_id` from `actionbuilder_cleaned.cln_actionbuilder__taggable_logbook` for that specific person+field tagging
 
-**Current status:** Tag removal is fully implemented. `current_tag_values` exposes `removal_string` for every existing tag application, and `updates_needed` passes these into `*_tag_remove` columns. The sync now replaces values rather than accumulating them.
+**How removal works in the sync script (`sync.py`):**
+
+Tag removal is a two-step process — NOT a `remove_tags` parameter in the POST body (that parameter does not exist in the AB API and causes a 500 error):
+
+1. **Step 1 — DELETE existing tagging:** `DELETE /campaigns/{campaign_id}/tags/{tag_id}/taggings/{tagging_id}`. A 404 response is treated as success — if the tagging no longer exists (e.g. previously cleared by another sync run), the desired state is already achieved.
+2. **Step 2 — POST new value:** `POST /campaigns/{campaign_id}/people` via the Person Signup Helper with `add_tags`. For "Clear Value" rows (correct value is 0/empty), step 2 is skipped.
+
+**Data staleness note:** The tagging IDs in `current_tag_values` come from our BQ snapshot of AB data. If another sync has run since the last BQ pull, those tagging IDs may no longer exist in the live AB system. The 404-tolerant delete handles this gracefully.
+
+---
+
+## Running the Sync
+
+```bash
+# Recurring update (all active campaigns):
+python scripts/sync.py update_records
+
+# Recurring update (one campaign only):
+python scripts/sync.py update_records --campaign 0e41ca37-e05d-499c-943b-9d08dc8725b0
+
+# Test with first N rows before full run:
+python scripts/sync.py update_records --campaign <uuid> --limit 10
+
+# Dry run — logs what would happen, no API calls:
+python scripts/sync.py update_records --dry-run
+
+# Dedup execution order (run once):
+python scripts/sync.py prepare_email_data --campaign <uuid>
+python scripts/sync.py prepare_phone_data --campaign <uuid>
+python scripts/sync.py remove_records --campaign <uuid>
+python scripts/sync.py insert_new_records --campaign <uuid>
+```
+
+**Campaigns:**
+- Test: `0e41ca37-e05d-499c-943b-9d08dc8725b0` (552 entities — use for validation)
+- Wisconsin: `12951a1f-...` (look up via BQ: `SELECT interact_id FROM actionbuilder_cleaned.cln_actionbuilder__campaigns WHERE name LIKE '%Wisconsin%'`)
+
+**Live test results (2026-02-23):**
+- Test campaign `update_records`: 146 entity groups, ok=146 err=0, 150 tags written
 
 ---
 
@@ -128,7 +156,13 @@ Maps ActionBuilder entities to `person_id`s in the `core_enhanced` hub via prima
 Pre-deletion contact migration feeds. For each duplicate pair in `dedup_candidates`, identifies emails/phones on the entity to be deleted that are not yet on the keeper entity. Must be run (via `prepare_email_data` / `prepare_phone_data`) before executing deletions to ensure participation data is preserved.
 
 #### `master_load_qualifiers` + `deduplicated_names_to_load`
-New record insertion infrastructure. Identifies people from external platforms who qualify to be added to ActionBuilder but don't yet have a record. `deduplicated_names_to_load` applies full AB exclusion and within-feed dedup. **Not currently active** — blocked on dedup execution. As of Feb 2026: 35,926 genuinely new records ready to insert.
+New record insertion infrastructure. Identifies people from external platforms who qualify to be added to ActionBuilder but don't yet have a record. `deduplicated_names_to_load` applies full AB exclusion and within-feed dedup. **Not currently active** — blocked on dedup execution. As of Feb 2026: 36,044 genuinely new records ready to insert.
+
+#### `test_campaign_updates`
+Filtered view of `updates_needed` for the Test campaign only, with first/last name and primary email joined in for easy human identification. Use to verify what `update_records` will do on the test campaign before running live.
+
+#### `test_campaign_update_summary`
+Aggregated breakdown of pending test campaign updates by field and change type, with min/max/avg-delta for numeric fields. Use as a quick sanity-check dashboard.
 
 ---
 
@@ -148,29 +182,30 @@ New record insertion infrastructure. Identifies people from external platforms w
 
 ## Known Issues and Open Problems
 
-### 1. Tag removal — IMPLEMENTED ✓
-`current_tag_values` exposes `removal_string = CONCAT(tag_interact_id, ':|:', taggable_logbook_interact_id)`. The `updates_needed` view passes these into `*_tag_remove` columns. Update Value rows include the removal IDs; New Value rows have NULL. The sync replaces values rather than accumulating them.
+### 1. Tag removal — IMPLEMENTED AND OPERATIONAL ✓
+`current_tag_values` exposes `removal_string = CONCAT(tag_interact_id, ':|:', taggable_logbook_interact_id)`. The `updates_needed` view passes these into `*_tag_remove` columns. The sync script performs a separate DELETE call per tagging (404-tolerant) before writing the new value. Update Value rows include removal IDs; New Value rows have NULL. The sync replaces values rather than accumulating them.
 
-### 2. Duplicate AB entities — VIEWS COMPLETE, EXECUTION PENDING SYNC SCRIPT DOCS
+### 2. Duplicate AB entities — SCRIPT OPERATIONAL, EXECUTION READY
 
 **Scale (Feb 2026, verified against live BQ):**
 - 23,116 total entities; 99.8% matched to a voter-file `person_id`
 - 475 `person_id`s map to 2+ AB entities
-- `dedup_candidates` view identifies **374 entities to delete** (341 via person_id match, 33 test accounts)
+- `dedup_candidates` view identifies **584 entities to delete** across 5 tiers
 
 **Root cause:** Pipeline run multiple times, each run creates new AB records rather than matching to existing ones. See [docs/deduplication.md](deduplication.md) for full analysis.
 
-**Current state — all views built and deployed:**
-- `email_migration_needed` — 91 emails to migrate to keeper entities (`prepare_email_data`)
-- `phone_migration_needed` — 93 phones to migrate to keeper entities (`prepare_phone_data`)
-- `dedup_candidates` — 374 entities to delete (`remove_records`)
-- Execution blocked pending TMC consultant confirmation of sync script column formats for these operations
+**Current state — all views built, script operational:**
+- `email_migration_needed` — 302 emails to migrate to keeper entities (`prepare_email_data`)
+- `phone_migration_needed` — 183 phones to migrate to keeper entities (`prepare_phone_data`)
+- `dedup_candidates` — 584 entities to delete (`remove_records`)
+- 1 unresolved dedup pair (Catherine Turcer) blocks `deduplicated_names_to_load`
 
-**Execution order (once column formats confirmed):**
+**Execution order:**
 1. `email_migration_needed` → sync (`prepare_email_data`)
 2. `phone_migration_needed` → sync (`prepare_phone_data`)
 3. `dedup_candidates` → sync (`remove_records`)
-4. `deduplicated_names_to_load` → sync (`insert_new_records`)
+4. Resolve Catherine Turcer pair → `bash dbt.sh run -s dedup_candidates deduplicated_names_to_load`
+5. `deduplicated_names_to_load` → sync (`insert_new_records`)
 
 **Why `identity_resolution` has `person_id` commented out:**
 Was commented out due to the duplicate problem. Can be restored once dedup is complete.

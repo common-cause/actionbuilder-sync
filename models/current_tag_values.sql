@@ -83,13 +83,16 @@ SELECT
 
   -- Create formatted field identifier for sync strings
   CASE
-    WHEN tag_name = 'Events Attended Past 6 Months' THEN 'Participation:|:Event Attendance Summary:|:Events Attended Past 6 Months:|:number_response'
-    WHEN tag_name = 'Most Recent Event Attended' THEN 'Participation:|:Event Attendance History:|:Most Recent Event Attended:|:date_response'
-    WHEN tag_name = 'First Event Attended' THEN 'Participation:|:Event Attendance History:|:First Event Attended:|:date_response'
-    WHEN tag_name = 'Action Network Actions' THEN 'Participation:|:Online Actions Past 6 Months:|:Action Network Actions:|:number_response'
-    WHEN tag_name = 'Action Network State Actions' THEN 'Participation:|:Online Actions Past 6 Months:|:Action Network State Actions:|:number_response'
-    WHEN tag_name = 'Top State Action Taker' THEN 'Participation:|:State Online Actions:|:Top State Action Taker:|:standard_response'
-    WHEN tag_name = 'Phone Bank Calls Made' THEN 'Participation:|:Event Attendance Summary:|:Phone Bank Calls Made:|:number_response'
+    WHEN tag_name = 'Events Attended Past 6 Months'          THEN 'Participation:|:Event Attendance Summary:|:Events Attended Past 6 Months:|:number_response'
+    WHEN tag_name = 'Most Recent Event Attended'              THEN 'Participation:|:Event Attendance History:|:Most Recent Event Attended:|:date_response'
+    WHEN tag_name = 'First Event Attended'                    THEN 'Participation:|:Event Attendance History:|:First Event Attended:|:date_response'
+    WHEN tag_name = 'Action Network Actions'                  THEN 'Participation:|:Online Actions Past 6 Months:|:Action Network Actions:|:number_response'
+    WHEN tag_name = 'Action Network State Actions'            THEN 'Participation:|:Online Actions Past 6 Months:|:Action Network State Actions:|:number_response'
+    WHEN tag_name = 'Top State Action Taker'                  THEN 'Participation:|:State Online Actions:|:Top State Action Taker:|:standard_response'
+    WHEN tag_name = 'Phone Bank Calls Made'                   THEN 'Participation:|:Event Attendance Summary:|:Phone Bank Calls Made:|:number_response'
+    WHEN tag_name = 'NewMode Actions'                         THEN 'Participation:|:Online Actions Past 6 Months:|:NewMode Actions:|:number_response'
+    WHEN tag_name = 'Top National Action Network Activist'    THEN 'Participation:|:National Online Actions:|:Top National Action Network Activist:|:standard_response'
+    WHEN tag_name = 'Hot Prospect'                            THEN 'Engagement:|:Prospect Identification:|:Hot Prospect:|:standard_response'
     ELSE CONCAT(tag_name, ':|:', tag_type, '_response')
   END as sync_field_identifier
 
