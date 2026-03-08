@@ -21,6 +21,7 @@ Credentials (in .env):
 import argparse
 import logging
 import sys
+import time
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -113,6 +114,7 @@ def cleanup_duplicate_tags(
     campaign_filter: Optional[str],
     dry_run: bool,
     limit: Optional[int],
+    delay: float = 0.0,
 ) -> None:
     """
     Find all tagging records where the same tag has been applied more than once
@@ -192,6 +194,8 @@ def cleanup_duplicate_tags(
                 logger.info(f'  Progress: {i}/{len(rows)} (ok={n_ok} err={n_err})')
             else:
                 logger.debug(f'  Deleted {label}')
+            if delay:
+                time.sleep(delay)
         except Exception as e:
             logger.error(f'  ERROR deleting {label}: {e}')
             n_err += 1
@@ -232,6 +236,13 @@ def main() -> None:
         metavar='N',
         help='Process only the first N duplicate records.',
     )
+    parser.add_argument(
+        '--delay',
+        type=float,
+        default=0.0,
+        metavar='SECONDS',
+        help='Seconds to sleep between deletes (default 0). Use 0.3 on Civis to avoid rate limits.',
+    )
     args = parser.parse_args()
 
     campaign_filter = _resolve_campaign_arg(args.campaign)
@@ -248,7 +259,7 @@ def main() -> None:
     else:
         ab = _make_ab_client()
 
-    cleanup_duplicate_tags(bq, ab, campaign_filter, args.dry_run, args.limit)
+    cleanup_duplicate_tags(bq, ab, campaign_filter, args.dry_run, args.limit, args.delay)
 
 
 if __name__ == '__main__':
