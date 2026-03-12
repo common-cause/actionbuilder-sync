@@ -11,13 +11,15 @@ Operations:
     apply_assessments   Write auto-assessment levels to entities (reads auto_assessment_rules)
 
 Usage:
-    python scripts/sync.py <operation> [--campaign CAMPAIGN_ID] [--dry-run] [--limit N]
+    python scripts/sync.py <operation> [--campaign CAMPAIGN_ID] [--dry-run] [--limit N] [--delay SECONDS]
 
     --campaign   Optional filter: only process rows for this campaign interact_id UUID.
                  When omitted, all rows are processed using per-row campaign_interact_id
                  from BQ. Useful for running one state at a time (e.g. --campaign arizona).
     --dry-run    Fetch data and log what WOULD happen; no API writes.
     --limit N    Process only first N rows (useful for test campaign validation).
+    --delay N    Seconds to sleep between API calls (default 0). Use 0.3 on Civis to avoid
+                 rate limits. Applies to: remove_records, prepare_email_data, prepare_phone_data.
 
 Credentials (in .env):
     BIGQUERY_CREDENTIALS_PASSWORD   Service account JSON (already present)
@@ -48,6 +50,7 @@ Notes:
 import argparse
 import logging
 import sys
+import time
 from collections import defaultdict
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
@@ -482,6 +485,7 @@ def remove_records(
     campaign_filter: Optional[str],
     dry_run: bool,
     limit: Optional[int],
+    delay: float = 0.0,
 ) -> None:
     """
     Delete duplicate entities from ActionBuilder.
@@ -534,6 +538,8 @@ def remove_records(
             ab.delete_person(campaign_id, entity_id)
             logger.debug(f'  Deleted {label}')
             n_ok += 1
+            if delay:
+                time.sleep(delay)
         except Exception as e:
             logger.error(f'  ERROR deleting {label}: {e}')
             n_err += 1
@@ -547,6 +553,7 @@ def prepare_email_data(
     campaign_filter: Optional[str],
     dry_run: bool,
     limit: Optional[int],
+    delay: float = 0.0,
 ) -> None:
     """
     Add secondary emails to keeper entities before dedup deletion.
@@ -601,6 +608,8 @@ def prepare_email_data(
             )
             logger.debug(f'  Added email {label}')
             n_ok += 1
+            if delay:
+                time.sleep(delay)
         except Exception as e:
             logger.error(f'  ERROR adding email {label}: {e}')
             n_err += 1
@@ -614,6 +623,7 @@ def prepare_phone_data(
     campaign_filter: Optional[str],
     dry_run: bool,
     limit: Optional[int],
+    delay: float = 0.0,
 ) -> None:
     """
     Add secondary phone numbers to keeper entities before dedup deletion.
@@ -668,6 +678,8 @@ def prepare_phone_data(
             )
             logger.debug(f'  Added phone {label}')
             n_ok += 1
+            if delay:
+                time.sleep(delay)
         except Exception as e:
             logger.error(f'  ERROR adding phone {label}: {e}')
             n_err += 1
@@ -793,6 +805,13 @@ def main() -> None:
         metavar='N',
         help='Process only the first N rows (useful for test campaign validation)',
     )
+    parser.add_argument(
+        '--delay',
+        type=float,
+        default=0.0,
+        metavar='SECONDS',
+        help='Seconds to sleep between API calls (default 0). Use 0.3 on Civis to avoid rate limits.',
+    )
     args = parser.parse_args()
 
     # Resolve state name aliases for --campaign
@@ -813,7 +832,11 @@ def main() -> None:
     else:
         ab = _make_ab_client()
 
-    OPERATIONS[args.operation](bq, ab, campaign_filter, args.dry_run, args.limit)
+    op_fn = OPERATIONS[args.operation]
+    kwargs: Dict[str, Any] = {}
+    if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data'):
+        kwargs['delay'] = args.delay
+    op_fn(bq, ab, campaign_filter, args.dry_run, args.limit, **kwargs)
 
 
 if __name__ == '__main__':
