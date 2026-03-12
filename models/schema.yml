@@ -218,6 +218,20 @@ models:
 
   # ── Deduplication ────────────────────────────────────────────────────────────
 
+  - name: dedup_candidates_bq_only
+    description: >
+      BQ-only version of the deduplication feed. Contains the full automated
+      dedup logic (all five tiers) based purely on what actionbuilder_cleaned
+      replication shows — no sync log filtering applied.
+
+      Referenced by dedup_candidates (the sync-log filtered operational view)
+      and by dedup_ambiguous (which needs the full known-dedup set to exclude
+      entities from the human review queue regardless of sync log state).
+
+      Internal model — sync.py reads dedup_candidates, not this view directly.
+      To revert to BQ-only mode, delete dedup_candidates.sql and rename this
+      file back to dedup_candidates.sql.
+
   - name: dedup_candidates
     description: >
       Identifies ActionBuilder entities that are duplicates and should be deleted
@@ -474,6 +488,19 @@ models:
           - not_null
       - name: email_norm
         description: Lowercased, trimmed version of email_to_add. Exposed for debugging.
+
+  - name: deduplicated_names_to_load_bq_only
+    description: >
+      BQ-only version of the new-record insertion feed. Contains the full
+      three-layer dedup logic based purely on actionbuilder_cleaned replication
+      — no sync log filtering applied.
+
+      Wrapped by deduplicated_names_to_load (the operational view) which adds
+      sync_log filtering to exclude person_ids already inserted.
+
+      Internal model — sync.py reads deduplicated_names_to_load, not this view
+      directly. To revert to BQ-only mode, delete deduplicated_names_to_load.sql
+      and rename this file back to deduplicated_names_to_load.sql.
 
   - name: deduplicated_names_to_load
     description: >

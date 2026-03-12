@@ -51,8 +51,9 @@ import argparse
 import logging
 import sys
 import time
+import uuid
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
@@ -146,6 +147,71 @@ CAMPAIGN_ALIASES: Dict[str, str] = {
     'texas':          'c7cf1a2b-a9e5-43dd-93a9-928d4bc979e4',
     'wisconsin':      '12951a1f-6d24-4923-ba31-d4aa6c4c3183',
 }
+
+
+class SyncLogger:
+    """
+    Batches sync API call results and flushes them to actionbuilder_sync.sync_log.
+
+    Provides an audit trail that dbt views use to filter already-processed records
+    when BQ replication is lagging (e.g. hard deletes from remove_records are never
+    replicated; new inserts may lag hours before appearing in actionbuilder_cleaned).
+
+    Instantiated once per script invocation with a unique run_id. Call flush()
+    after the operation completes; also auto-flushes every BATCH_SIZE records.
+
+    In --dry-run mode, log() and flush() are both no-ops.
+    """
+
+    TABLE = 'actionbuilder_sync.sync_log'
+    BATCH_SIZE = 100
+
+    def __init__(
+        self, bq: BigQueryConnector, run_id: str, dry_run: bool = False
+    ) -> None:
+        self._bq = bq
+        self._run_id = run_id
+        self._dry_run = dry_run
+        self._pending: List[Dict[str, Any]] = []
+
+    def log(
+        self,
+        operation: str,
+        entity_interact_id: Optional[str],
+        campaign_interact_id: Optional[str],
+        status: str,
+        person_id: Optional[str] = None,
+        error_detail: Optional[str] = None,
+    ) -> None:
+        """Append one log row. Auto-flushes when BATCH_SIZE is reached."""
+        if self._dry_run:
+            return
+        self._pending.append({
+            'run_id': self._run_id,
+            'operation': operation,
+            'entity_interact_id': entity_interact_id,
+            'campaign_interact_id': campaign_interact_id,
+            'person_id': person_id,
+            'tag_interact_id': None,
+            'tagging_interact_id': None,
+            'executed_at': datetime.now(timezone.utc).isoformat(),
+            'status': status,
+            'error_detail': error_detail,
+        })
+        if len(self._pending) >= self.BATCH_SIZE:
+            self.flush()
+
+    def flush(self) -> None:
+        """Write all pending rows to BQ. Logs a warning on failure but does not raise."""
+        if not self._pending or self._dry_run:
+            return
+        batch = self._pending[:]
+        self._pending = []
+        try:
+            self._bq.insert_rows(self.TABLE, batch)
+            logger.debug(f'SyncLogger: flushed {len(batch)} rows to sync_log')
+        except Exception as e:
+            logger.warning(f'SyncLogger: failed to flush {len(batch)} rows: {e}')
 
 
 def _resolve_campaign_arg(value: Optional[str]) -> Optional[str]:
@@ -388,6 +454,7 @@ def insert_new_records(
     campaign_filter: Optional[str],
     dry_run: bool,
     limit: Optional[int],
+    sync_logger: Optional[SyncLogger] = None,
 ) -> None:
     """
     Insert genuinely new entities into ActionBuilder.
@@ -468,13 +535,20 @@ def insert_new_records(
             n_ok += 1
             continue
 
+        pid = str(row['person_id']) if row.get('person_id') else None
         try:
             ab.insert_entity(campaign_id, person_data, add_tags or None)
             logger.debug(f'  Inserted {label} (campaign={campaign_id[:8]}...)')
             n_ok += 1
+            if sync_logger:
+                sync_logger.log('insert_entity', None, campaign_id, 'ok',
+                                person_id=pid)
         except Exception as e:
             logger.error(f'  ERROR inserting {label}: {e}')
             n_err += 1
+            if sync_logger:
+                sync_logger.log('insert_entity', None, campaign_id, 'error',
+                                person_id=pid, error_detail=str(e)[:500])
 
     logger.info(f'insert_new_records: done. ok={n_ok} err={n_err} skipped={n_skip}')
 
@@ -486,6 +560,7 @@ def remove_records(
     dry_run: bool,
     limit: Optional[int],
     delay: float = 0.0,
+    sync_logger: Optional[SyncLogger] = None,
 ) -> None:
     """
     Delete duplicate entities from ActionBuilder.
@@ -538,13 +613,32 @@ def remove_records(
             ab.delete_person(campaign_id, entity_id)
             logger.debug(f'  Deleted {label}')
             n_ok += 1
+            if sync_logger:
+                sync_logger.log('remove_from_campaign', entity_id, campaign_id, 'ok')
             if delay:
                 time.sleep(delay)
         except Exception as e:
-            logger.error(f'  ERROR deleting {label}: {e}')
-            n_err += 1
+            err_str = str(e)
+            if '404' in err_str:
+                # Entity already absent from campaign — desired state achieved.
+                # Log as '404' so the sync_log filter recognises it as processed.
+                logger.debug(f'  Already gone (404) {label}')
+                n_skip += 1
+                if sync_logger:
+                    sync_logger.log('remove_from_campaign', entity_id, campaign_id, '404')
+                if delay:
+                    time.sleep(delay)
+            else:
+                logger.error(f'  ERROR deleting {label}: {e}')
+                n_err += 1
+                if sync_logger:
+                    sync_logger.log('remove_from_campaign', entity_id, campaign_id,
+                                    'error', error_detail=err_str[:500])
 
-    logger.info(f'remove_records: done. ok={n_ok} err={n_err} skipped={n_skip}')
+    logger.info(
+        f'remove_records: done. ok={n_ok} err={n_err} '
+        f'skipped={n_skip} (includes 404-already-gone)'
+    )
 
 
 def prepare_email_data(
@@ -822,6 +916,10 @@ def main() -> None:
     # Load .env early so both BQ and AB credentials are available to ccef-connections
     load_dotenv(dotenv_path='.env')
 
+    # Unique ID for this invocation — shared across all sync_log rows from this run
+    run_id = str(uuid.uuid4())
+    logger.info(f'Run ID: {run_id}')
+
     # Build BQ client
     bq = _make_bq_client()
 
@@ -832,11 +930,20 @@ def main() -> None:
     else:
         ab = _make_ab_client()
 
+    # SyncLogger: records API call results to BQ for use by dbt view filters.
+    # No-op in --dry-run mode.
+    sync_logger = SyncLogger(bq, run_id, dry_run=args.dry_run)
+
     op_fn = OPERATIONS[args.operation]
     kwargs: Dict[str, Any] = {}
     if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data'):
         kwargs['delay'] = args.delay
+    if args.operation in ('remove_records', 'insert_new_records'):
+        kwargs['sync_logger'] = sync_logger
     op_fn(bq, ab, campaign_filter, args.dry_run, args.limit, **kwargs)
+
+    # Flush any remaining buffered log rows
+    sync_logger.flush()
 
 
 if __name__ == '__main__':

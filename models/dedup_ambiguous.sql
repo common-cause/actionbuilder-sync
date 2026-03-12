@@ -315,12 +315,15 @@ all_signals AS (
   SELECT * FROM phone_signal
 ),
 
--- Entities already in dedup_candidates (either side of any pair)
+-- Entities already in dedup_candidates_bq_only (either side of any pair).
+-- Uses the BQ-only version (not the sync-log filtered wrapper) so that the
+-- review queue excludes ALL known-dedup entities — including ones already
+-- removed from AB but not yet reflected in BQ replication.
 known_dedup AS (
   SELECT iid FROM (
-    SELECT delete_interact_id AS iid FROM {{ ref('dedup_candidates') }}
+    SELECT delete_interact_id AS iid FROM {{ ref('dedup_candidates_bq_only') }}
     UNION ALL
-    SELECT keep_interact_id   AS iid FROM {{ ref('dedup_candidates') }}
+    SELECT keep_interact_id   AS iid FROM {{ ref('dedup_candidates_bq_only') }}
     WHERE keep_interact_id IS NOT NULL
   )
 )
