@@ -8,10 +8,11 @@ Keeps participation data in [ActionBuilder](https://actionbuilder.org) current b
 
 Reads participation records from Mobilize, Action Network, and ScaleToWin, computes the correct tag values for each activist in ActionBuilder, compares them against what ActionBuilder currently shows, and outputs a table of changes. A custom sync script (provided by The Movement Cooperative) reads that table and makes the ActionBuilder API calls.
 
-**Current state:**
-- Updating tag values on existing records — active and running
-- Deduplication — contact migration views built; deletion execution pending sync script docs from TMC consultant
-- New record insertion — built and fully guarded; ready to activate after dedup execution
+**Current state (2026-03-12):**
+- Tag updates — active and running; `taggable_logbook` replication stale (TMC issue, workaround TBD)
+- Deduplication — executed: 154 emails migrated, 91 phones migrated, 8,921 entities removed from campaigns
+- New record insertion — executed: 3,532 entities inserted 2026-03-12
+- Sync log — live: `actionbuilder_sync.sync_log` records API calls so dbt views stay correct despite BQ replication gaps
 
 ---
 
@@ -54,7 +55,7 @@ Should report all checks passing.
 ## Running dbt
 
 ```bash
-# Deploy all 15 views to BigQuery
+# Deploy all 25 views to BigQuery
 bash dbt.sh run
 
 # Deploy a single model
@@ -91,20 +92,34 @@ ActionBuilder Sync/
 │   ├── updates_needed.sql                 # Sync job input — rows to change
 │   │
 │   │   ── Deduplication ──
-│   ├── dedup_candidates.sql               # Entities to delete from AB
+│   ├── dedup_candidates.sql               # Sync-log filtered wrapper (used by sync.py)
+│   ├── dedup_candidates_bq_only.sql       # BQ-only version (used by dedup_ambiguous)
+│   ├── dedup_ambiguous.sql                # Ambiguous pairs for human/AI review
+│   ├── dedup_unresolved.sql               # dedup_ambiguous minus resolved pairs
 │   ├── email_migration_needed.sql         # Emails to copy to keeper entities before deletion
 │   ├── phone_migration_needed.sql         # Phones to copy to keeper entities before deletion
 │   │
-│   │   ── New record insertion (not yet active) ──
+│   │   ── New record insertion ──
 │   ├── master_load_qualifiers.sql         # People who qualify for AB entry
-│   ├── deduplicated_names_to_load.sql     # Final new-record insertion feed (AB-guarded)
+│   ├── deduplicated_names_to_load.sql     # Sync-log filtered wrapper (used by sync.py)
+│   └── deduplicated_names_to_load_bq_only.sql  # BQ-only version
 │   │
 │   │   ── Diagnostics ──
 │   ├── identity_resolution.sql            # Entity → person_id mapping with data-source flags
 │   └── entity_lookup_debug.sql            # Entity names, emails, phones for spot-checking
 │
+├── civis/                      # Shell scripts for Civis Platform job deployment
+│   ├── cleanup_duplicate_tags.sh
+│   ├── remove_duplicate_entities.sh
+│   └── insert_new_records.sh
+│
+├── scripts/                    # Python sync scripts
+│   ├── sync.py                 # Main sync script (all operations)
+│   └── create_sync_log.sql     # One-time DDL to create sync_log table (already run)
+│
 ├── docs/
-│   └── sync_overview.md        # Detailed sync architecture, field formats, known issues
+│   ├── sync_overview.md        # Detailed sync architecture, field formats, known issues
+│   └── deduplication.md        # Dedup strategy, execution log, edge cases
 │
 ├── dbt_project.yml             # dbt project config
 ├── profiles.yml                # BigQuery connection config (reads keyfile from env var)
@@ -149,7 +164,7 @@ ActionBuilder DB ──► (actionbuilder_cleaned.*) ──► current_tag_value
 
 ## Key Files Outside This Repo
 
-- **The sync script** — provided by The Movement Cooperative consultant; reads `actionbuilder_sync.updates_needed` and makes AB API calls. Not version-controlled here.
+- **The sync script** — `scripts/sync.py` in this repo; reads dbt views and makes AB API calls. Operations: `update_records`, `insert_new_records`, `remove_records`, `prepare_email_data`, `prepare_phone_data`, `apply_assessments`.
 - **Credentials** — stored in `.env` (gitignored). The `BIGQUERY_CREDENTIALS_PASSWORD` env var holds the full service account JSON.
 - **ccef-connections library** — at `../AI Interpretation/ccef-connections`; provides BigQuery, Airtable, Zoom, Sheets, Action Network connectors. Used for any Python scripts that need to query BigQuery directly.
 
@@ -179,12 +194,11 @@ The MCP connects to `proj-tmc-mem-com` using the shared `BIGQUERY_CREDENTIALS_PA
 
 1. **[Done]** Manage views as code via dbt (replaced BQ GUI)
 2. **[Done]** Tag removal — sync now replaces values rather than accumulating them
-3. **[Done]** `dedup_candidates` — identifies 374 AB entities to delete
-4. **[Done]** `email_migration_needed` / `phone_migration_needed` — contact info to consolidate onto keeper entities before deletion (91 emails, 93 phones)
-5. **[Done]** `deduplicated_names_to_load` — 35,926 new records, fully guarded against re-creating existing entities (by person_id, email, phone) and internally deduplicated (gmail normalization + name+phone matching)
-6. **[Next]** Execute dedup sequence via sync script once TMC consultant provides operation column formats:
-   - `email_migration_needed` → `prepare_email_data`
-   - `phone_migration_needed` → `prepare_phone_data`
-   - `dedup_candidates` → `remove_records`
-   - `deduplicated_names_to_load` → `insert_new_records`
-7. **[Future]** New data flows: Airtable, Zoom, Mobilize relational organizing campaign
+3. **[Done]** `dedup_candidates` — identifies duplicate AB entities across five tiers
+4. **[Done]** `email_migration_needed` / `phone_migration_needed` — contact info consolidated before deletion (154 emails, 91 phones migrated)
+5. **[Done]** `deduplicated_names_to_load` — new-record insertion feed, fully guarded against re-creating existing entities
+6. **[Done]** Dedup execution — 8,921 entities removed from campaigns, 3,532 new entities inserted (2026-03-12)
+7. **[Done]** Sync log architecture — `sync_log` BQ table + dbt wrapper views compensate for BQ replication gaps; sync.py instruments remove_records and insert_new_records
+8. **[Active]** Resolve open `dedup_unresolved` pairs (currently 16 same-campaign ambiguous pairs)
+9. **[Active / TMC-blocked]** `taggable_logbook` replication fix — table too large for TMC's query window; `current_tag_values` and `updates_needed` work from stale data until resolved. Workaround path TBD.
+10. **[Future]** New data flows: Airtable, Zoom, Mobilize relational organizing campaign
