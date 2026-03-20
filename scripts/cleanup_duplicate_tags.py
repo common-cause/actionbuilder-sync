@@ -22,6 +22,8 @@ import argparse
 import logging
 import sys
 import time
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -105,6 +107,77 @@ def _query(bq: BigQueryConnector, sql: str) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# SyncLogger (duplicated from sync.py — both scripts are standalone)
+# ---------------------------------------------------------------------------
+
+class SyncLogger:
+    """
+    Batches sync API call results and flushes them to actionbuilder_sync.sync_log.
+
+    Provides an audit trail of tagging operations for BQ evidence and future
+    tag-state reconstruction when taggable_logbook replication is stale.
+
+    In --dry-run mode, log() and flush() are both no-ops.
+    """
+
+    TABLE = 'actionbuilder_sync.sync_log'
+    BATCH_SIZE = 100
+
+    def __init__(
+        self, bq: BigQueryConnector, run_id: str, dry_run: bool = False
+    ) -> None:
+        self._bq = bq
+        self._run_id = run_id
+        self._dry_run = dry_run
+        self._pending: List[Dict[str, Any]] = []
+
+    def log(
+        self,
+        operation: str,
+        entity_interact_id: Optional[str],
+        campaign_interact_id: Optional[str],
+        status: str,
+        person_id: Optional[str] = None,
+        tag_interact_id: Optional[str] = None,
+        tagging_interact_id: Optional[str] = None,
+        tag_name: Optional[str] = None,
+        value_written: Optional[str] = None,
+        error_detail: Optional[str] = None,
+    ) -> None:
+        """Append one log row. Auto-flushes when BATCH_SIZE is reached."""
+        if self._dry_run:
+            return
+        self._pending.append({
+            'run_id': self._run_id,
+            'operation': operation,
+            'entity_interact_id': entity_interact_id,
+            'campaign_interact_id': campaign_interact_id,
+            'person_id': person_id,
+            'tag_interact_id': tag_interact_id,
+            'tagging_interact_id': tagging_interact_id,
+            'tag_name': tag_name,
+            'value_written': value_written,
+            'executed_at': datetime.now(timezone.utc).isoformat(),
+            'status': status,
+            'error_detail': error_detail,
+        })
+        if len(self._pending) >= self.BATCH_SIZE:
+            self.flush()
+
+    def flush(self) -> None:
+        """Write all pending rows to BQ. Logs a warning on failure but does not raise."""
+        if not self._pending or self._dry_run:
+            return
+        batch = self._pending[:]
+        self._pending = []
+        try:
+            self._bq.insert_rows(self.TABLE, batch)
+            logger.debug(f'SyncLogger: flushed {len(batch)} rows to sync_log')
+        except Exception as e:
+            logger.warning(f'SyncLogger: failed to flush {len(batch)} rows: {e}')
+
+
+# ---------------------------------------------------------------------------
 # Main operation
 # ---------------------------------------------------------------------------
 
@@ -115,6 +188,7 @@ def cleanup_duplicate_tags(
     dry_run: bool,
     limit: Optional[int],
     delay: float = 0.0,
+    sync_logger: Optional[SyncLogger] = None,
 ) -> None:
     """
     Find all tagging records where the same tag has been applied more than once
@@ -135,7 +209,8 @@ def cleanup_duplicate_tags(
             t.interact_id       AS tag_interact_id,
             t.name              AS tag_name,
             c.interact_id       AS campaign_interact_id,
-            tl.taggable_id      AS entity_id
+            tl.taggable_id      AS entity_id,
+            e.interact_id       AS entity_interact_id
         FROM (
             SELECT
                 interact_id,
@@ -155,6 +230,8 @@ def cleanup_duplicate_tags(
             ON t.id = tl.tag_id
         JOIN actionbuilder_cleaned.cln_actionbuilder__campaigns c
             ON c.id = tl.campaign_id
+        JOIN actionbuilder_cleaned.cln_actionbuilder__entities e
+            ON e.id = tl.taggable_id
         WHERE tl.rn > 1
           {campaign_clause}
         ORDER BY tl.taggable_id, tl.tag_id
@@ -188,8 +265,18 @@ def cleanup_duplicate_tags(
             continue
 
         try:
-            ab.delete_tagging(campaign_id, tag_id, tagging_id)
+            status = ab.delete_tagging(campaign_id, tag_id, tagging_id)
             n_ok += 1
+            if sync_logger:
+                sync_logger.log(
+                    operation='delete_tagging',
+                    entity_interact_id=str(row['entity_interact_id']),
+                    campaign_interact_id=campaign_id,
+                    status=status,
+                    tag_interact_id=tag_id,
+                    tagging_interact_id=tagging_id,
+                    tag_name=tag_name,
+                )
             if i % 500 == 0:
                 logger.info(f'  Progress: {i}/{len(rows)} (ok={n_ok} err={n_err})')
             else:
@@ -251,6 +338,9 @@ def main() -> None:
 
     load_dotenv(dotenv_path='.env')
 
+    run_id = str(uuid.uuid4())
+    logger.info(f'Run ID: {run_id}')
+
     bq = _make_bq_client()
 
     if args.dry_run:
@@ -259,7 +349,10 @@ def main() -> None:
     else:
         ab = _make_ab_client()
 
-    cleanup_duplicate_tags(bq, ab, campaign_filter, args.dry_run, args.limit, args.delay)
+    sync_logger = SyncLogger(bq, run_id, dry_run=args.dry_run)
+    cleanup_duplicate_tags(bq, ab, campaign_filter, args.dry_run, args.limit, args.delay,
+                           sync_logger=sync_logger)
+    sync_logger.flush()
 
 
 if __name__ == '__main__':

@@ -9,6 +9,7 @@ Operations:
     prepare_email_data  Add secondary emails to keeper entities (reads email_migration_needed)
     prepare_phone_data  Add secondary phones to keeper entities (reads phone_migration_needed)
     apply_assessments   Write auto-assessment levels to entities (reads auto_assessment_rules)
+    snapshot_tag_state  One-time: query AB API for current tag state and log to sync_log
 
 Usage:
     python scripts/sync.py <operation> [--campaign CAMPAIGN_ID] [--dry-run] [--limit N] [--delay SECONDS]
@@ -181,6 +182,10 @@ class SyncLogger:
         campaign_interact_id: Optional[str],
         status: str,
         person_id: Optional[str] = None,
+        tag_interact_id: Optional[str] = None,
+        tagging_interact_id: Optional[str] = None,
+        tag_name: Optional[str] = None,
+        value_written: Optional[str] = None,
         error_detail: Optional[str] = None,
     ) -> None:
         """Append one log row. Auto-flushes when BATCH_SIZE is reached."""
@@ -192,8 +197,10 @@ class SyncLogger:
             'entity_interact_id': entity_interact_id,
             'campaign_interact_id': campaign_interact_id,
             'person_id': person_id,
-            'tag_interact_id': None,
-            'tagging_interact_id': None,
+            'tag_interact_id': tag_interact_id,
+            'tagging_interact_id': tagging_interact_id,
+            'tag_name': tag_name,
+            'value_written': value_written,
             'executed_at': datetime.now(timezone.utc).isoformat(),
             'status': status,
             'error_detail': error_detail,
@@ -284,24 +291,38 @@ def _get_campaign_map(bq: BigQueryConnector) -> Dict[str, str]:
 # Sync-string / removal-string parsers
 # ---------------------------------------------------------------------------
 
-def parse_sync_string(s: str) -> Dict[str, str]:
+def parse_sync_string(s: str) -> Dict[str, Any]:
     """
     Parse an AB sync string into a tag dict suitable for add_tags.
 
-    Format:  "Section:|:Category:|:Field:|:response_type:value"
-    Returns: {"action_builder:section": ..., "action_builder:field": ..., "name": ...}
+    Format:  "Section:|:Category:|:FieldName:|:response_type:value"
+
+    AB tagging resource structure (confirmed via live API):
+        action_builder:section  → parts[0]  (e.g. "Participation")
+        action_builder:field    → parts[1]  (category, e.g. "Event Attendance Summary")
+        name                    → parts[2]  (field/data-point name, e.g. "Phone Bank Calls Made")
+        action_builder:number_response / action_builder:date_response → parsed value
+
+    For standard_response tags, 'name' alone identifies the option (no separate value key).
     """
     parts = s.split(':|:')
     if len(parts) != 4:
         raise ValueError(f'Expected 4 parts in sync string, got {len(parts)}: {s!r}')
-    section = parts[0]
-    field = parts[2]
-    value = parts[3].split(':', 1)[1]   # strip "number_response:" prefix
-    return {
-        'action_builder:section': section,
-        'action_builder:field': field,
-        'name': value,
+    response_type, value = parts[3].split(':', 1)
+    tag: Dict[str, Any] = {
+        'action_builder:section': parts[0],
+        'action_builder:field':   parts[1],   # category
+        'name':                   parts[2],   # field/data-point name
     }
+    if response_type == 'number_response':
+        try:
+            tag['action_builder:number_response'] = int(value)
+        except ValueError:
+            tag['action_builder:number_response'] = float(value)
+    elif response_type == 'date_response':
+        tag['action_builder:date_response'] = value
+    # standard_response: 'name' already identifies the option; no extra key needed
+    return tag
 
 
 def parse_removal_string(s: str) -> Tuple[str, str]:
@@ -338,6 +359,78 @@ def _build_insert_tag(col: str, value: Any) -> Optional[Dict[str, str]]:
     }
 
 
+def _extract_tag_info(tag: Dict[str, Any]) -> Tuple[str, str]:
+    """
+    Extract (tag_name, value_written) from a parsed tag dict.
+
+    Handles both formats:
+      - parse_sync_string: name=tag_name, value in action_builder:*_response key
+      - _build_insert_tag: action_builder:field=tag_name, name=value
+    """
+    if 'action_builder:number_response' in tag:
+        return tag['name'], str(tag['action_builder:number_response'])
+    elif 'action_builder:date_response' in tag:
+        return tag['name'], tag['action_builder:date_response']
+    elif tag.get('name') and tag.get('action_builder:field'):
+        # _build_insert_tag format: field is the tag name, name is the value
+        field = tag['action_builder:field']
+        # If 'name' looks like a value (short/numeric), this is insert format
+        name_val = tag['name']
+        try:
+            float(name_val)
+            return field, name_val
+        except ValueError:
+            pass
+        # Could be a date value
+        if len(name_val) == 10 and name_val[4:5] == '-':
+            return field, name_val
+        # Standard response from parse_sync_string (name IS the tag name)
+        return name_val, 'applied'
+    return tag.get('name', ''), 'applied'
+
+
+def _get_tag_map(bq: BigQueryConnector) -> Dict[str, str]:
+    """
+    Return a dict mapping tag name -> tag interact_id UUID.
+
+    Used to populate tag_interact_id in sync_log entries for add_tagging ops.
+    """
+    rows = _query(bq, """
+        SELECT name, interact_id
+        FROM actionbuilder_cleaned.cln_actionbuilder__tags
+        WHERE status = 1
+    """)
+    return {r['name']: r['interact_id'] for r in rows}
+
+
+def _lookup_tagging_id(
+    ab: ActionBuilderConnector,
+    campaign_id: str,
+    entity_id: str,
+    tag_interact_id: str,
+) -> Optional[str]:
+    """
+    Query the AB API for the current tagging_interact_id of a specific tag
+    on an entity. Returns None if the tag is not applied.
+
+    Used when updates_needed shows a value that needs removal but the
+    removal_string is NULL (tag was written by us after the BQ snapshot).
+    """
+    try:
+        taggings = ab.list_person_taggings(campaign_id, entity_id)
+        for t in taggings:
+            # Match by tag interact_id from _links.osdi:tag.href
+            tag_href = t.get('_links', {}).get('osdi:tag', {}).get('href', '')
+            if tag_interact_id in tag_href:
+                # Extract tagging interact_id from identifiers
+                identifiers = t.get('identifiers', [])
+                if identifiers and identifiers[0].startswith('action_builder:'):
+                    return identifiers[0][len('action_builder:'):]
+    except Exception as e:
+        logger.warning(f'  _lookup_tagging_id failed for entity={entity_id[:8]}...: {e}')
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Operations
 # ---------------------------------------------------------------------------
@@ -348,6 +441,7 @@ def update_records(
     campaign_filter: Optional[str],
     dry_run: bool,
     limit: Optional[int],
+    sync_logger: Optional[SyncLogger] = None,
 ) -> None:
     """
     Update tags on existing ActionBuilder entities.
@@ -358,8 +452,9 @@ def update_records(
       a. Deletes existing taggings listed in *_tag_remove columns.
       b. Posts new tag values from *_tag columns via update_entity_with_tags.
     """
-    logger.info('update_records: fetching campaign ID map...')
+    logger.info('update_records: fetching campaign ID map and tag map...')
     campaign_map = _get_campaign_map(bq)
+    tag_map = _get_tag_map(bq)
 
     logger.info('update_records: fetching rows from updates_needed...')
     sql = f'SELECT * FROM `{BQ_PROJECT}.{BQ_DATASET}.updates_needed`'
@@ -425,15 +520,44 @@ def update_records(
         try:
             # Step a: delete existing taggings before writing new values
             for tag_id, tagging_id in removals:
-                ab.delete_tagging(campaign_id, tag_id, tagging_id)
+                # Reverse-lookup tag_name from tag_map for logging
+                removal_tag_name = None
+                for tn, tid in tag_map.items():
+                    if tid == tag_id:
+                        removal_tag_name = tn
+                        break
+                status = ab.delete_tagging(campaign_id, tag_id, tagging_id)
                 n_removals_done += 1
                 logger.debug(f'  Deleted tagging {tagging_id[:8]}... for {label}')
+                if sync_logger:
+                    sync_logger.log(
+                        operation='delete_tagging',
+                        entity_interact_id=entity_id,
+                        campaign_interact_id=campaign_id,
+                        status=status,
+                        tag_interact_id=tag_id,
+                        tagging_interact_id=tagging_id,
+                        tag_name=removal_tag_name,
+                    )
 
             # Step b: post new tag values (skip if nothing to add, e.g. Clear Value)
             if add_tags:
-                ab.update_entity_with_tags(campaign_id, entity_id, add_tags)
+                response = ab.update_entity_with_tags(campaign_id, entity_id, add_tags)
                 n_tags_added += len(add_tags)
                 logger.debug(f'  Added {len(add_tags)} tag(s) for {label}')
+                if sync_logger:
+                    for tag in add_tags:
+                        tag_name, value_written = _extract_tag_info(tag)
+                        tag_iid = tag_map.get(tag_name)
+                        sync_logger.log(
+                            operation='add_tagging',
+                            entity_interact_id=entity_id,
+                            campaign_interact_id=campaign_id,
+                            status='ok',
+                            tag_interact_id=tag_iid,
+                            tag_name=tag_name,
+                            value_written=value_written,
+                        )
 
             n_ok += 1
 
@@ -463,7 +587,9 @@ def insert_new_records(
     from each row (derived from the entity's state) for the API call.
     Pass --campaign to process only one state's records.
     """
-    logger.info('insert_new_records: fetching rows from deduplicated_names_to_load...')
+    logger.info('insert_new_records: fetching tag map and rows...')
+    tag_map = _get_tag_map(bq)
+
     sql = f'SELECT * FROM `{BQ_PROJECT}.{BQ_DATASET}.deduplicated_names_to_load`'
     if limit:
         sql += f' LIMIT {limit}'
@@ -537,12 +663,26 @@ def insert_new_records(
 
         pid = str(row['person_id']) if row.get('person_id') else None
         try:
-            ab.insert_entity(campaign_id, person_data, add_tags or None)
+            response = ab.insert_entity(campaign_id, person_data, add_tags or None)
             logger.debug(f'  Inserted {label} (campaign={campaign_id[:8]}...)')
             n_ok += 1
             if sync_logger:
                 sync_logger.log('insert_entity', None, campaign_id, 'ok',
                                 person_id=pid)
+                # Log per-tag add_tagging entries for tag-state reconstruction
+                for tag in add_tags:
+                    tag_name, value_written = _extract_tag_info(tag)
+                    tag_iid = tag_map.get(tag_name)
+                    sync_logger.log(
+                        operation='add_tagging',
+                        entity_interact_id=None,  # entity not yet in BQ
+                        campaign_interact_id=campaign_id,
+                        status='ok',
+                        person_id=pid,
+                        tag_interact_id=tag_iid,
+                        tag_name=tag_name,
+                        value_written=value_written,
+                    )
         except Exception as e:
             logger.error(f'  ERROR inserting {label}: {e}')
             n_err += 1
@@ -853,6 +993,156 @@ def apply_assessments(
     logger.info(f'apply_assessments: done. ok={n_ok} err={n_err} skipped={n_skip}')
 
 
+def snapshot_tag_state(
+    bq: BigQueryConnector,
+    ab: Optional[ActionBuilderConnector],
+    campaign_filter: Optional[str],
+    dry_run: bool,
+    limit: Optional[int],
+    delay: float = 0.0,
+    sync_logger: Optional[SyncLogger] = None,
+) -> None:
+    """
+    One-time API snapshot: discover current tag state for managed entities.
+
+    For each entity in updates_needed (or entities we've previously inserted),
+    calls list_person_taggings to get the live tag state from AB, then writes
+    add_tagging entries to sync_log. This fills the gap for entities whose
+    tag state we don't have in the log (e.g. the 3,532 entities inserted
+    2026-03-12 before tag-level logging was added).
+
+    Rate-limited with --delay. Safe to re-run (idempotent — overlay uses
+    most-recent-entry-wins logic).
+    """
+    logger.info('snapshot_tag_state: fetching tag map and entity list...')
+    tag_map = _get_tag_map(bq)
+    # Reverse map: tag interact_id -> tag name
+    tag_id_to_name = {v: k for k, v in tag_map.items()}
+
+    # Get distinct entities from updates_needed (these are the entities we manage)
+    campaign_clause = ''
+    if campaign_filter:
+        campaign_clause = f"AND c.interact_id = '{campaign_filter}'"
+
+    sql = f"""
+        SELECT DISTINCT
+            e.interact_id AS entity_interact_id,
+            c.interact_id AS campaign_interact_id
+        FROM actionbuilder_cleaned.cln_actionbuilder__campaigns_entities ce
+        JOIN actionbuilder_cleaned.cln_actionbuilder__entities e ON e.id = ce.entity_id
+        JOIN actionbuilder_cleaned.cln_actionbuilder__campaigns c ON c.id = ce.campaign_id
+        WHERE c.status = 'active'
+          {campaign_clause}
+        ORDER BY campaign_interact_id, entity_interact_id
+    """
+    if limit:
+        sql += f' LIMIT {limit}'
+    rows = _query(bq, sql)
+
+    if not rows:
+        logger.info('snapshot_tag_state: no entities to snapshot')
+        return
+
+    logger.info(f'snapshot_tag_state: {len(rows)} entities to query')
+    n_ok = n_err = n_tags = 0
+
+    # Tags we care about (the ones managed by our sync)
+    managed_tags = set(INSERT_TAG_FIELDS.values())
+    managed_tag_names = {
+        'Events Attended Past 6 Months', 'Most Recent Event Attended',
+        'First Event Attended', 'Action Network Actions',
+        'Action Network State Actions', 'Top State Action Taker',
+        'Phone Bank Calls Made', 'NewMode Actions',
+        'Top National Action Network Activist', 'Hot Prospect',
+    }
+
+    for i, row in enumerate(rows, 1):
+        entity_id = str(row['entity_interact_id'])
+        campaign_id = str(row['campaign_interact_id'])
+        label = f'entity={entity_id[:8]}... campaign={campaign_id[:8]}...'
+
+        if dry_run:
+            logger.info(f'  [DRY-RUN] Would snapshot {label}')
+            n_ok += 1
+            continue
+
+        try:
+            taggings = ab.list_person_taggings(campaign_id, entity_id)
+            entity_tags = 0
+            # Track which tags we've already logged for this entity to avoid
+            # logging duplicates (AB may have multiple taggings for the same tag)
+            seen_tags = set()
+            for t in taggings:
+                # Extract tag name
+                t_tag_name = t.get('action_builder:name', '') or t.get('name', '')
+
+                # Extract tag interact_id from _links.osdi:tag.href
+                tag_href = t.get('_links', {}).get('osdi:tag', {}).get('href', '')
+                t_tag_id = tag_href.rsplit('/', 1)[-1] if '/tags/' in tag_href else ''
+
+                # Extract tagging interact_id from identifiers
+                tagging_iid = ''
+                identifiers = t.get('identifiers', [])
+                if identifiers:
+                    # Format: "action_builder:<uuid>"
+                    raw = identifiers[0]
+                    if raw.startswith('action_builder:'):
+                        tagging_iid = raw[len('action_builder:'):]
+
+                # Try to identify tag name from our tag_id_to_name map
+                if not t_tag_name and t_tag_id:
+                    t_tag_name = tag_id_to_name.get(t_tag_id, '')
+
+                # Only log tags we manage
+                if t_tag_name not in managed_tag_names:
+                    continue
+
+                # Only log the first (most recent) tagging per tag name
+                if t_tag_name in seen_tags:
+                    continue
+                seen_tags.add(t_tag_name)
+
+                # Extract value — use explicit None check since 0 is a valid value
+                num_val = t.get('action_builder:number_response')
+                date_val = t.get('action_builder:date_response')
+                if num_val is not None:
+                    value = str(num_val)
+                elif date_val is not None:
+                    value = str(date_val)
+                else:
+                    value = 'applied'
+
+                if sync_logger:
+                    sync_logger.log(
+                        operation='add_tagging',
+                        entity_interact_id=entity_id,
+                        campaign_interact_id=campaign_id,
+                        status='ok',
+                        tag_interact_id=t_tag_id or tag_map.get(t_tag_name),
+                        tagging_interact_id=tagging_iid or None,
+                        tag_name=t_tag_name,
+                        value_written=str(value) if value else None,
+                    )
+                    entity_tags += 1
+
+            n_tags += entity_tags
+            n_ok += 1
+            if i % 100 == 0:
+                logger.info(f'  Progress: {i}/{len(rows)} (ok={n_ok} err={n_err} tags={n_tags})')
+
+            if delay:
+                time.sleep(delay)
+
+        except Exception as e:
+            logger.error(f'  ERROR snapshotting {label}: {e}')
+            n_err += 1
+
+    logger.info(
+        f'snapshot_tag_state: done. '
+        f'ok={n_ok} err={n_err} tags_logged={n_tags}'
+    )
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -864,6 +1154,7 @@ OPERATIONS = {
     'prepare_email_data': prepare_email_data,
     'prepare_phone_data': prepare_phone_data,
     'apply_assessments': apply_assessments,
+    'snapshot_tag_state': snapshot_tag_state,
 }
 
 
@@ -936,9 +1227,9 @@ def main() -> None:
 
     op_fn = OPERATIONS[args.operation]
     kwargs: Dict[str, Any] = {}
-    if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data'):
+    if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state'):
         kwargs['delay'] = args.delay
-    if args.operation in ('remove_records', 'insert_new_records'):
+    if args.operation in ('remove_records', 'insert_new_records', 'update_records', 'snapshot_tag_state'):
         kwargs['sync_logger'] = sync_logger
     op_fn(bq, ab, campaign_filter, args.dry_run, args.limit, **kwargs)
 

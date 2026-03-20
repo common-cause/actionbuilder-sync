@@ -44,9 +44,16 @@ CREATE TABLE IF NOT EXISTS `proj-tmc-mem-com`.actionbuilder_sync.sync_log (
   -- NULL for all other operations.
   person_id            STRING,
 
-  -- Tag/tagging UUIDs — reserved for future delete_tagging logging if needed.
+  -- Tag/tagging UUIDs — used for tag-level logging (add_tagging, delete_tagging).
   tag_interact_id      STRING,
   tagging_interact_id  STRING,
+
+  -- Tag metadata — used by the current_tag_values overlay to reconstruct
+  -- tag state from sync_log when taggable_logbook replication is stale.
+  --   tag_name:       human-readable tag name (e.g. "Events Attended Past 6 Months")
+  --   value_written:  the value that was written (number as string, date, or 'applied')
+  tag_name             STRING,
+  value_written        STRING,
 
   -- Timestamp of the API call (CURRENT_TIMESTAMP at time of call).
   executed_at          TIMESTAMP NOT NULL,

@@ -37,6 +37,14 @@ bash dbt.sh compile
 
 Do NOT run `dbt` directly — it won't have credentials.
 
+## ActionBuilder Instance
+
+- Subdomain: `commoncause`
+- Web UI base: `https://commoncause.actionbuilder.org`
+- Entity profile URL pattern: `https://commoncause.actionbuilder.org/entity/view/{entity_id}/profile?campaignId={campaign_id}&clientQueryId=null`
+  (uses internal numeric entity_id and campaign_id, not interact_ids)
+- API base: `https://commoncause.actionbuilder.org/api/rest/v1`
+
 ## Credentials
 
 - `.env` in project root holds `BIGQUERY_CREDENTIALS_PASSWORD` (full service account JSON, one line, no quotes)
@@ -60,31 +68,41 @@ rows = list(bq.query("SELECT ..."))
 
 The only exception is `bigquery.ScalarQueryParameter` for parameterized queries — avoid even this by inlining validated, non-user-supplied values directly into the SQL string.
 
-## Current State (as of 2026-03-12)
+## Current State (as of 2026-03-20)
 
-- Tag updates: active and running
+- Tag updates: `update_records` now logs tag_name, value_written, tag_interact_id to sync_log; ready for production — no longer blocked by taggable_logbook staleness (overlay workaround deployed)
 - Deduplication: EXECUTED — 154 emails migrated, 91 phones migrated, 8,921 entities removed from campaigns
-- New record insertion: EXECUTED — 3,532 entities inserted 2026-03-12 (expect in BQ 2026-03-13)
-- Sync log: BUILT AND DEPLOYED — `actionbuilder_sync.sync_log` table live; sync.py instruments remove_records and insert_new_records
+- New record insertion: EXECUTED — 3,532 entities inserted 2026-03-12
+- Sync log: LIVE — `actionbuilder_sync.sync_log` instruments remove_records, insert_new_records, update_records, cleanup_duplicate_tags, and snapshot_tag_state; now includes tag_name and value_written columns
+- Sync log overlay: DEPLOYED — `current_tag_values` overlays sync_log on stale taggable_logbook data; `updates_needed` automatically uses it
+- AB mirror bug: evidence captured 2026-03-16/17 (see `evidence/` dir); bug filed with AB (Willy); taggable_logbook stalled at 2026-03-05
+- **Next step:** Run `snapshot_tag_state` on Test campaign to verify API response parsing, then on all campaigns to populate sync_log with current tag state
 
 ## BQ Replication Gaps (known, reported to TMC 2026-03-12)
 
 1. **Hard deletes never replicated** — `campaigns_entities` removals have no `updated_at` change;
    BQ perpetually shows removed entities. Mitigated by sync_log (dedup_candidates wrapper).
-2. **`taggable_logbook` stale since 2026-03-05** — table too large for TMC's 30s query window.
-   `current_tag_values` and `updates_needed` are working from stale tag data until this is fixed.
-   Resolution path TBD — may require workaround similar to sync_log.
+2. **`taggable_logbook` stale since 2026-03-05** — AB's own internal SQL mirror stalled (table too large).
+   Bug filed with AB directly (Willy); evidence captured 2026-03-16/17 in `evidence/` dir.
+   `current_tag_values` and `updates_needed` work from stale tag data until AB fixes their mirror.
 
 ## Sync Log Architecture
 
-Two dbt models exist in paired versions:
+Three dbt models exist in paired versions:
 - `dedup_candidates_bq_only` — original BQ-only logic (used by dedup_ambiguous)
 - `dedup_candidates` — thin wrapper filtering out entities already logged as removed
 - `deduplicated_names_to_load_bq_only` — original BQ-only logic
 - `deduplicated_names_to_load` — thin wrapper filtering out person_ids already logged as inserted
+- `current_tag_values_bq_only` — original BQ-only tag state from taggable_logbook
+- `current_tag_values` — overlay merging sync_log tag ops onto stale BQ snapshot
 
-To revert to BQ-only mode: delete the two wrapper models, rename `_bq_only` files back,
+To revert to BQ-only mode: delete the wrapper models, rename `_bq_only` files back,
 revert dedup_ambiguous ref. The sync_log table stays as a permanent audit log.
+
+### sync_log columns (tag-level, added 2026-03-20)
+- `tag_name` — human-readable tag name (e.g. "Events Attended Past 6 Months")
+- `value_written` — the value written (number as string, date, or 'applied')
+- Operations: `add_tagging`, `delete_tagging` (in addition to existing entity-level ops)
 
 ## Key Datasets
 

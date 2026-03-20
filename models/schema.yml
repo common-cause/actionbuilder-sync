@@ -162,11 +162,53 @@ models:
       - name: phone_calls_sync_string
         description: Fully formatted sync string for "Phone Bank Calls Made".
 
+  - name: current_tag_values_bq_only
+    description: >
+      BQ-only version of the "what IS currently in ActionBuilder" view. Reads
+      from cln_actionbuilder__taggable_logbook and returns the most recently
+      applied, non-deleted tag for each entity+tag combination.
+
+      Referenced by current_tag_values (the sync-log overlay wrapper).
+      When taggable_logbook replication is healthy, the overlay adds minimal
+      overhead since sync_log has few entries to merge.
+
+      Internal model — updates_needed reads current_tag_values, not this view
+      directly. To revert to BQ-only mode, delete current_tag_values.sql and
+      rename this file back to current_tag_values.sql.
+    columns:
+      - name: entity_id
+        description: ActionBuilder internal numeric entity ID.
+        tests:
+          - not_null
+      - name: tag_name
+        description: The name of the tag (e.g. "Events Attended Past 6 Months").
+      - name: current_value
+        description: >
+          The current value of the tag. For Standard tags, returns 'applied'.
+          For value-bearing tags (number, date), returns the actual value string.
+      - name: taggable_logbook_interact_id
+        description: >
+          The 36-char UUID from cln_actionbuilder__taggable_logbook for this
+          specific tag application. Used in removal_string.
+        tests:
+          - unique
+      - name: removal_string
+        description: >
+          Pre-built removal string in the format required by the sync job:
+          "tag-interact-id:|:taggable-logbook-interact-id".
+          Pass this into a *_tag_remove column to delete this tag value.
+        tests:
+          - not_null
+
   - name: current_tag_values
     description: >
-      The "what IS currently in ActionBuilder" view. Reads from
-      cln_actionbuilder__taggable_logbook and returns the most recently applied,
-      non-deleted tag for each entity+tag combination.
+      The "what IS currently in ActionBuilder" view. Overlays sync_log
+      entries on top of the BQ snapshot from current_tag_values_bq_only to
+      provide accurate tag state even when taggable_logbook replication is stale.
+
+      Logic: for each entity+campaign+tag, if sync_log has activity, the most
+      recent log entry wins (add_tagging = value present, delete_tagging =
+      value cleared). If no sync_log activity, the BQ snapshot row is used as-is.
 
       One row per entity per tag. Exposes removal_string, which the sync job
       uses to delete the existing value before writing a new one.
