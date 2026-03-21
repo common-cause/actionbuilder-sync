@@ -1,0 +1,61 @@
+======================================================================
+AB MIRROR STALENESS EVIDENCE — WRITE CHECK
+Generated: 2026-03-16 23:08 UTC
+Mirror known stalled since: 2026-03-05
+======================================================================
+
+Processed 3 entity/campaign group(s).
+
+For each write below: the tagging_interact_id was returned by the live
+AB API (via list_person_taggings after write). It should appear in
+taggable_logbook.interact_id once the mirror catches up.
+
+----------------------------------------------------------------------
+Entity:   Wanda Torrey (006fa7b0-838f-4c82-9a7a-d7e1f0ed1b49)
+Campaign: arizona (a41cde2c-a06f-4fed-8073-b544ca9aead7)
+Written:  2026-03-16T23:08:23.701823+00:00
+
+  Tags written:
+    [Participation] Action Network Actions: '30'
+
+  (No new tagging IDs detected in before/after diff — tagging_id extraction may need adjustment for this API version)
+
+  Deletions (1):
+    57c77a49-0229-4337-8909-64ea49dcd336  status=404
+
+----------------------------------------------------------------------
+Entity:   arlene sturm (009c2937-36a6-49ad-8f82-53726e4daa2b)
+Campaign: arizona (a41cde2c-a06f-4fed-8073-b544ca9aead7)
+Written:  2026-03-16T23:08:27.240142+00:00
+
+  Tags written:
+    [Participation] Action Network Actions: '25'
+
+  (No new tagging IDs detected in before/after diff — tagging_id extraction may need adjustment for this API version)
+
+  Deletions (1):
+    15482e1b-e88b-4242-bb3d-01c8707dd94c  status=404
+
+----------------------------------------------------------------------
+Entity:   Anne Hayes (00dd5b6f-4364-4040-bd48-c39bf2fd5302)
+Campaign: arizona (a41cde2c-a06f-4fed-8073-b544ca9aead7)
+Written:  2026-03-16T23:08:30.540939+00:00
+
+  Tags written:
+    [Participation] Action Network Actions: '31'
+
+  (No new tagging IDs detected in before/after diff — tagging_id extraction may need adjustment for this API version)
+
+  Deletions (1):
+    5f1516da-0016-4ec0-a1d1-b89b29d9d6b5  status=404
+
+======================================================================
+TOTAL: 0 new tagging(s) written across 3 entity/campaign group(s)
+       0 new tagging_interact_id(s) confirmed absent from BQ mirror at write time
+
+ACTION REQUIRED FROM ACTIONBUILDER:
+  The tagging_interact_ids listed above exist in the live AB production
+  database (confirmed via list_person_taggings API response). They should
+  appear in the taggable_logbook mirror with created_at ≈ write time above.
+  As of this report, they do not. Please investigate mirror replication.
+======================================================================

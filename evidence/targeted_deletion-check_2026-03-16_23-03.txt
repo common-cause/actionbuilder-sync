@@ -1,0 +1,99 @@
+======================================================================
+AB MIRROR STALENESS EVIDENCE — DELETION CHECK
+Generated: 2026-03-16 23:03 UTC
+Mirror known stalled since: 2026-03-05
+Cleanup run (duplicate tag deletion): 2026-03-12
+======================================================================
+
+Entity:   Ciro Amador (a78c68e7-edd6-41ef-b053-3ea20f6428a6)
+Campaign: fd65be58-cce6-400f-97f8-e14adb6558d3
+
+SUMMARY
+-------
+BQ mirror shows 81 active tagging(s) total (6 unique tag/entity pairs + 75 excess duplicates)
+Live AB API returns 6 active tagging(s)
+
+DISCREPANCY: 75 tagging(s) BQ shows active but API has already deleted
+  (These were removed by cleanup_duplicate_tags on 2026-03-12)
+  (AB UI confirmed clean post-cleanup; mirror has not caught up)
+
+TAGGINGS BQ SHOWS AS ACTIVE — ABSENT FROM LIVE API:
+  tagging_interact_id                     tag_name
+  --------------------------------------  ------------------------------
+  6f864631-bc8d-4940-9bd6-6ece972e0216    Events Attended Past 6 Months  (BQ updated_at: 2026-02-03)
+  7020cbbe-8488-42b2-b427-0d39526ccbeb    Events Attended Past 6 Months  (BQ updated_at: 2026-02-02)
+  937170d7-50bf-4632-bab4-76e87c382e39    Events Attended Past 6 Months  (BQ updated_at: 2026-02-01)
+  66c796a7-f612-4f95-b3dc-e1f2c242d283    Events Attended Past 6 Months  (BQ updated_at: 2026-01-31)
+  ad51608d-5799-4e24-b8fc-d805fb8e7fc5    Events Attended Past 6 Months  (BQ updated_at: 2026-01-30)
+  4ad63cb5-f851-46a5-98a6-90d378846ae1    Events Attended Past 6 Months  (BQ updated_at: 2026-01-29)
+  babba6c7-f674-444c-bdd8-d46d43efe380    First Event Attended  (BQ updated_at: 2026-02-03)
+  1e2e5725-d114-4ca5-9310-d98665b551a0    First Event Attended  (BQ updated_at: 2026-02-02)
+  cdf05f20-da71-403c-b406-00c819aba516    First Event Attended  (BQ updated_at: 2026-02-01)
+  aeae0161-e9d4-4a6d-b32e-326787b2c630    First Event Attended  (BQ updated_at: 2026-01-31)
+  8913b643-e359-48f0-90f2-935d2656acab    First Event Attended  (BQ updated_at: 2026-01-30)
+  632e7cf6-2cce-44a1-b621-ed11e6b13b1f    First Event Attended  (BQ updated_at: 2026-01-29)
+  d5d44b8c-ad98-476c-9e92-c30e09368094    Most Recent Event Attended  (BQ updated_at: 2026-02-19)
+  11369645-c2e7-4d60-b6af-97f43cde40da    Most Recent Event Attended  (BQ updated_at: 2026-02-18)
+  e4531eaf-78f6-4c5f-b246-9266cfe66f8d    Most Recent Event Attended  (BQ updated_at: 2026-02-17)
+  bd1ee628-7a4b-483d-a706-621dfddaaa69    Most Recent Event Attended  (BQ updated_at: 2026-02-16)
+  a8222666-afaf-4906-b70c-d288503a2240    Most Recent Event Attended  (BQ updated_at: 2026-02-15)
+  5f0e9bee-68e1-40e0-94df-a8722781fdde    Most Recent Event Attended  (BQ updated_at: 2026-02-14)
+  a687963b-59ed-4fcd-87f7-b2842e5a0158    Most Recent Event Attended  (BQ updated_at: 2026-02-13)
+  0194a8b1-aec7-449d-a8c3-9c36f11455c2    Most Recent Event Attended  (BQ updated_at: 2026-02-12)
+  f75246fc-0762-45a2-889d-258c7a6a7a76    Most Recent Event Attended  (BQ updated_at: 2026-02-11)
+  8cb6b119-9483-4b45-84ae-7b40e4cbc951    Most Recent Event Attended  (BQ updated_at: 2026-02-10)
+  fbe5b6ad-4cbc-44e6-abae-881af6976c04    Most Recent Event Attended  (BQ updated_at: 2026-02-04)
+  054d4e46-5102-4835-bc3a-3dc928aa3fd5    Most Recent Event Attended  (BQ updated_at: 2026-02-02)
+  d2f4a0d1-83db-412b-8cb9-f0b454f5f41a    Most Recent Event Attended  (BQ updated_at: 2026-02-01)
+  d9e8306a-03e5-4bbe-b413-4f0c2ce96a02    Most Recent Event Attended  (BQ updated_at: 2026-01-31)
+  d9b5e3dd-87f0-47ba-8488-a3d0e189853f    Most Recent Event Attended  (BQ updated_at: 2026-01-30)
+  e2018fdc-217c-4cdd-8a66-92a57f4f37f6    Most Recent Event Attended  (BQ updated_at: 2026-01-29)
+  6813522d-789b-4e21-be2c-b90f7d948ede    Phone Bank Calls Made  (BQ updated_at: 2026-02-19)
+  700ffd50-82dc-40d8-b19d-b8ff505f1e20    Phone Bank Calls Made  (BQ updated_at: 2026-02-18)
+  97daa212-681d-4a94-997a-857defc5c016    Phone Bank Calls Made  (BQ updated_at: 2026-02-17)
+  b5bb5915-4c6e-4e0c-b35e-fbe3d3d0d1af    Phone Bank Calls Made  (BQ updated_at: 2026-02-16)
+  dfc93611-0341-4fd8-85e1-9d4c05c2403d    Phone Bank Calls Made  (BQ updated_at: 2026-02-15)
+  390f2897-1a42-45fe-bc1f-1c951828d526    Phone Bank Calls Made  (BQ updated_at: 2026-02-14)
+  ffa59c0c-81bb-4df8-827f-b5aca36384a5    Phone Bank Calls Made  (BQ updated_at: 2026-02-13)
+  31e5e83a-061c-4ac4-be78-1a930cbb0119    Phone Bank Calls Made  (BQ updated_at: 2026-02-12)
+  cf5e0249-2b77-4bf3-8319-701f7561380c    Phone Bank Calls Made  (BQ updated_at: 2026-02-11)
+  41f69803-169a-42e2-be4d-c9c6cc54e7c6    Phone Bank Calls Made  (BQ updated_at: 2026-02-10)
+  c3fffee5-3671-4998-a014-50ac31900405    Phone Bank Calls Made  (BQ updated_at: 2026-02-09)
+  69308379-1e91-47dd-ad08-db806391bd1c    Phone Bank Calls Made  (BQ updated_at: 2026-02-08)
+  30af7072-8a48-409f-99ee-6f3f6ff9b05c    Phone Bank Calls Made  (BQ updated_at: 2026-02-07)
+  219103f0-04bb-4435-99f2-36d1033767ac    Phone Bank Calls Made  (BQ updated_at: 2026-02-06)
+  88e5b53c-7c76-4701-b169-b65b3a7220f4    Phone Bank Calls Made  (BQ updated_at: 2026-02-05)
+  dabb2302-f114-45a8-bf8e-6eb3ce76cc7b    Phone Bank Calls Made  (BQ updated_at: 2026-02-04)
+  3cc2dbcb-ce58-485e-afa8-76ecf7f62b71    Phone Bank Calls Made  (BQ updated_at: 2026-01-22)
+  d14853f5-eb15-4856-b0e4-f6da27d9612b    Phone Bank Calls Made  (BQ updated_at: 2026-01-21)
+  c33dc81f-8614-41db-b198-6461338d6785    Phone Bank Calls Made  (BQ updated_at: 2026-01-16)
+  066f84a8-c35f-4996-9478-0f3a75ca4718    Phone Bank Calls Made  (BQ updated_at: 2026-01-15)
+  58ae3ffe-44c4-4dad-bee6-2ca44645bb0d    Phone Bank Calls Made  (BQ updated_at: 2026-01-14)
+  cec0b352-43cf-43c5-bc84-7c56cdb27b7d    Phone Bank Calls Made  (BQ updated_at: 2026-01-08)
+  953d287b-6ae8-455d-836b-8850a4467490    Phone Bank Calls Made  (BQ updated_at: 2026-01-07)
+  9ecdbb99-678b-4145-8429-8d344b4fe21d    Phone Bank Calls Made  (BQ updated_at: 2025-12-23)
+  0d0afec0-8e54-422d-a601-89a8c414e5c3    Phone Bank Calls Made  (BQ updated_at: 2025-12-22)
+  df890a48-71dc-41a2-8f07-27d19e76b50f    Phone Bank Calls Made  (BQ updated_at: 2025-12-21)
+  dc8c3906-0e52-4ced-8021-e5374bd97f59    Phone Bank Calls Made  (BQ updated_at: 2025-12-20)
+  16a39e21-0768-4e88-85b5-d2cd163be32b    Phone Bank Calls Made  (BQ updated_at: 2025-12-19)
+  7d769d8a-63e2-422d-961b-5c12a9ccd97d    Phone Bank Calls Made  (BQ updated_at: 2025-12-18)
+  825bc492-d2da-4801-95e4-1187cdb748e7    Phone Bank Calls Made  (BQ updated_at: 2025-12-17)
+  51a9841b-fc69-4e9e-bb5f-7acd309d4a45    Phone Bank Calls Made  (BQ updated_at: 2025-12-12)
+  7648bcef-19d9-4094-a150-96352cbc6e1b    Phone Bank Calls Made  (BQ updated_at: 2025-12-11)
+  7467316c-5d96-4790-b057-43ffe599e9e9    Phone Bank Calls Made  (BQ updated_at: 2025-12-10)
+  141428a8-3afa-426c-a928-69010a504f34    Phone Bank Calls Made  (BQ updated_at: 2025-12-06)
+  9a93fc78-33d0-44f6-90dc-3a3281e78204    Phone Bank Calls Made  (BQ updated_at: 2025-12-05)
+  b11dffcb-96c3-4f72-9ab2-432799da2b27    Phone Bank Calls Made  (BQ updated_at: 2025-12-04)
+  09984a2b-76d9-4e98-b7b7-d5bf11272e09    Phone Bank Calls Made  (BQ updated_at: 2025-12-03)
+  f9ae0553-d35d-45a5-9434-e8546775ddd7    Phone Bank Calls Made  (BQ updated_at: 2025-11-26)
+  18db4334-47fc-4270-8cf7-46c685e9e25a    Phone Bank Calls Made  (BQ updated_at: 2025-11-19)
+  58101850-4bc1-4a39-8ff6-db02a6a81491    Phone Bank Calls Made  (BQ updated_at: 2025-11-03)
+  36363488-4aa1-4bac-8ae9-15acbf9aced4    Phone Bank Calls Made  (BQ updated_at: 2025-11-01)
+  42fb65cf-01f2-4cdd-a55d-9668de5db1b6    Phone Bank Calls Made  (BQ updated_at: 2025-10-31)
+  259ed100-d9e8-4097-bace-ce3c1a15086d    Phone Bank Calls Made  (BQ updated_at: 2025-10-23)
+  beeb0dcc-5840-4b8f-bd2e-ef92f2920e06    Phone Bank Calls Made  (BQ updated_at: 2025-10-15)
+  81eff32e-9813-4781-b0fe-022d025e7c1f    Phone Bank Calls Made  (BQ updated_at: 2025-10-14)
+  a836fdb4-fc9d-4170-bde4-b676579e4b17    Phone Bank Calls Made  (BQ updated_at: 2025-10-07)
+  fad1ac7e-cb40-43ef-8812-35c36692a45e    Phone Bank Calls Made  (BQ updated_at: 2025-10-06)
+
+Each tagging_interact_id above should have deleted_at set in taggable_logbook as of 2026-03-12. The mirror shows deleted_at IS NULL.

@@ -1,0 +1,222 @@
+{
+  "mode": "write-check",
+  "captured_at": "2026-03-16T23:41:58.940718+00:00",
+  "mirror_stall_date": "2026-03-05",
+  "results": [
+    {
+      "entity_interact_id": "a78c68e7-edd6-41ef-b053-3ea20f6428a6",
+      "entity_name": "Ciro Amador",
+      "campaign_interact_id": "fd65be58-cce6-400f-97f8-e14adb6558d3",
+      "campaign_name": "california",
+      "write_executed_at": "2026-03-16T23:42:03.179093+00:00",
+      "tags_written": [
+        {
+          "section": "Participation",
+          "field": "Action Network Actions",
+          "value": "24",
+          "source_col": "online_actions_past_6_months_tag"
+        },
+        {
+          "section": "Participation",
+          "field": "Action Network State Actions",
+          "value": "0",
+          "source_col": "online_actions_past_6_months_tag"
+        },
+        {
+          "section": "Engagement",
+          "field": "Hot Prospect",
+          "value": "Hot Prospect",
+          "source_col": "engagement_tag"
+        },
+        {
+          "section": "Participation",
+          "field": "Most Recent Event Attended",
+          "value": "2026-03-10",
+          "source_col": "event_participation_history_tag"
+        },
+        {
+          "section": "Participation",
+          "field": "Phone Bank Calls Made",
+          "value": "313",
+          "source_col": "event_participation_summary_tag"
+        }
+      ],
+      "deletions_performed": [
+        {
+          "tagging_interact_id": "287c7c7e-0127-49f2-b8f2-f1c1a9897d55",
+          "tag_interact_id": "96658890-7872-4339-bd86-a4148d37b78d",
+          "status": "ok"
+        },
+        {
+          "tagging_interact_id": "911d1b2a-0815-4137-83d6-8ebaf2ca6ce9",
+          "tag_interact_id": "2702ca85-3181-4014-8453-58c6ded6eb37",
+          "status": "ok"
+        },
+        {
+          "tagging_interact_id": "587d6507-6822-486c-9916-9ddda047728d",
+          "tag_interact_id": "9e3f918b-7254-4097-b596-1d77bc78be8b",
+          "status": "ok"
+        },
+        {
+          "tagging_interact_id": "ac367c11-515e-4af0-ad1b-727fe565eec3",
+          "tag_interact_id": "f1b8ded2-b8b5-4143-ab3c-30b577ce7dcb",
+          "status": "ok"
+        }
+      ],
+      "before_tagging_count": 6,
+      "after_tagging_count": 2,
+      "new_taggings": [],
+      "removed_taggings": [
+        {
+          "tagging_interact_id": "911d1b2a-0815-4137-83d6-8ebaf2ca6ce9",
+          "section": "Participation",
+          "field": "Online Actions Past 6 Months",
+          "tag_name": "Action Network State Actions",
+          "response": 4
+        },
+        {
+          "tagging_interact_id": "587d6507-6822-486c-9916-9ddda047728d",
+          "section": "Participation",
+          "field": "Event Attendance History",
+          "tag_name": "Most Recent Event Attended",
+          "response": "2026-02-17"
+        },
+        {
+          "tagging_interact_id": "ac367c11-515e-4af0-ad1b-727fe565eec3",
+          "section": "Participation",
+          "field": "Event Attendance Summary",
+          "tag_name": "Phone Bank Calls Made",
+          "response": 302
+        },
+        {
+          "tagging_interact_id": "287c7c7e-0127-49f2-b8f2-f1c1a9897d55",
+          "section": "Participation",
+          "field": "Online Actions Past 6 Months",
+          "tag_name": "Action Network Actions",
+          "response": 38
+        }
+      ],
+      "new_tagging_interact_ids_in_bq_mirror": [],
+      "api_response_person_resource": {
+        "origin_system": "Action Builder",
+        "identifiers": [
+          "action_builder:a78c68e7-edd6-41ef-b053-3ea20f6428a6"
+        ],
+        "created_date": "2025-06-03T22:38:58.746Z",
+        "modified_date": "2026-03-16T23:42:04.103Z",
+        "action_builder:entity_type": "Person",
+        "given_name": "Ciro",
+        "family_name": "Amador",
+        "browser_url": "https://commoncause.actionbuilder.org/entity/view/5420/profile?campaignId=12",
+        "preferred_language": "en",
+        "postal_addresses": [
+          {
+            "action_builder:identifier": "action_builder:5b064ec3-3ebe-46b2-8542-16f21cc560ef",
+            "address_lines": [
+              "950 Arcadia Ave Apt 42"
+            ],
+            "locality": "Vista",
+            "region": "CA",
+            "postal_code": "92084",
+            "country": "US",
+            "source": "action_network",
+            "address_type": "physical"
+          }
+        ],
+        "phone_numbers": [
+          {
+            "action_builder:identifier": "action_builder:d81a64f8-f14c-4c4f-b4cd-d5cad08df65c",
+            "number": "17608474760",
+            "number_type": "Mobile",
+            "source": "action_network"
+          }
+        ],
+        "email_addresses": [
+          {
+            "action_builder:identifier": "action_builder:5ccc5574-72fb-4b5c-80f2-8c559edbba69",
+            "address": "ciroamador16@gmail.com",
+            "address_type": "Home",
+            "status": "subscribed",
+            "source": "action_network"
+          }
+        ],
+        "_links": {
+          "self": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/a78c68e7-edd6-41ef-b053-3ea20f6428a6"
+          },
+          "action_builder:campaign": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3"
+          },
+          "action_builder:entity_type": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/entity_types/19c95c01-a5ef-4aed-a5a3-37f70bd77a9f"
+          },
+          "action_builder:connections": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/a78c68e7-edd6-41ef-b053-3ea20f6428a6/connections"
+          },
+          "osdi:taggings": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/a78c68e7-edd6-41ef-b053-3ea20f6428a6/taggings"
+          }
+        }
+      },
+      "raw_after_tagging_sample": [
+        {
+          "origin_system": "Action Builder",
+          "identifiers": [
+            "action_builder:d5a19375-942a-4970-b9fb-61ee483e127c"
+          ],
+          "created_date": "2026-02-04T14:48:49.151Z",
+          "modified_date": "2026-02-04T14:48:49.160Z",
+          "item_type": "entity",
+          "action_builder:section": "Participation",
+          "action_builder:field": "Event Attendance History",
+          "action_builder:field_type": "date",
+          "action_builder:name": "First Event Attended",
+          "action_builder:date_response": "2025-01-16",
+          "_links": {
+            "self": {
+              "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/a78c68e7-edd6-41ef-b053-3ea20f6428a6/taggings/d5a19375-942a-4970-b9fb-61ee483e127c"
+            },
+            "action_builder:campaign": {
+              "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3"
+            },
+            "osdi:tag": {
+              "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/tags/543dcd58-0a1d-4e57-b27e-cc43007146c4"
+            },
+            "osdi:person": {
+              "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/a78c68e7-edd6-41ef-b053-3ea20f6428a6"
+            }
+          }
+        },
+        {
+          "origin_system": "Action Builder",
+          "identifiers": [
+            "action_builder:ee943ce5-b3dd-49df-bc19-f0906ae81472"
+          ],
+          "created_date": "2026-02-04T14:46:38.856Z",
+          "modified_date": "2026-02-04T14:46:38.863Z",
+          "item_type": "entity",
+          "action_builder:section": "Participation",
+          "action_builder:field": "Event Attendance Summary",
+          "action_builder:field_type": "number",
+          "action_builder:name": "Events Attended Past 6 Months",
+          "action_builder:number_response": 1,
+          "_links": {
+            "self": {
+              "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/a78c68e7-edd6-41ef-b053-3ea20f6428a6/taggings/ee943ce5-b3dd-49df-bc19-f0906ae81472"
+            },
+            "action_builder:campaign": {
+              "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3"
+            },
+            "osdi:tag": {
+              "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/tags/5a0944c3-57b6-4300-a5c9-e4436847fc6a"
+            },
+            "osdi:person": {
+              "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/a78c68e7-edd6-41ef-b053-3ea20f6428a6"
+            }
+          }
+        }
+      ],
+      "mirror_staleness_evidence": []
+    }
+  ]
+}

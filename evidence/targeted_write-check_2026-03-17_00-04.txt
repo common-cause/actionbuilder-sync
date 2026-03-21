@@ -1,0 +1,47 @@
+======================================================================
+AB MIRROR STALENESS EVIDENCE — WRITE CHECK
+Generated: 2026-03-17 00:04 UTC
+Mirror known stalled since: 2026-03-05
+======================================================================
+
+Processed 1 entity/campaign group(s).
+
+For each write below: the tagging_interact_id was returned by the live
+AB API (via list_person_taggings after write). It should appear in
+taggable_logbook.interact_id once the mirror catches up.
+
+----------------------------------------------------------------------
+Entity:   Ciro Amador (a78c68e7-edd6-41ef-b053-3ea20f6428a6)
+Campaign: california (fd65be58-cce6-400f-97f8-e14adb6558d3)
+Written:  2026-03-17T00:04:45.695862+00:00
+
+  Tags written:
+    [Participation] Online Actions Past 6 Months: 'Action Network Actions'
+    [Participation] Online Actions Past 6 Months: 'Action Network State Actions'
+    [Engagement] Prospect Identification: 'Hot Prospect'
+    [Participation] Event Attendance History: 'Most Recent Event Attended'
+    [Participation] Event Attendance Summary: 'Phone Bank Calls Made'
+
+  New tagging_interact_ids assigned by AB API:
+    6c392f64-ced0-45d2-a7e1-2100a5772821  field=Event Attendance Summary  value=313  [BQ mirror: NOT YET]
+    e960a62b-a782-47a6-9edc-cde6a9bab83c  field=Prospect Identification  value=None  [BQ mirror: NOT YET]
+    ca1d29ed-c2d0-43bf-b5d8-537736c31255  field=Online Actions Past 6 Months  value=None  [BQ mirror: NOT YET]
+    d0ff3d38-d4b8-462a-95d0-59d1822f9994  field=Event Attendance History  value=2026-03-17  [BQ mirror: NOT YET]
+    3f7f7475-399f-47e5-9fb7-c8b5a8ac409c  field=Online Actions Past 6 Months  value=24  [BQ mirror: NOT YET]
+
+  Deletions (4):
+    287c7c7e-0127-49f2-b8f2-f1c1a9897d55  status=404
+    911d1b2a-0815-4137-83d6-8ebaf2ca6ce9  status=404
+    587d6507-6822-486c-9916-9ddda047728d  status=404
+    ac367c11-515e-4af0-ad1b-727fe565eec3  status=404
+
+======================================================================
+TOTAL: 5 new tagging(s) written across 1 entity/campaign group(s)
+       5 new tagging_interact_id(s) confirmed absent from BQ mirror at write time
+
+ACTION REQUIRED FROM ACTIONBUILDER:
+  The tagging_interact_ids listed above exist in the live AB production
+  database (confirmed via list_person_taggings API response). They should
+  appear in the taggable_logbook mirror with created_at ≈ write time above.
+  As of this report, they do not. Please investigate mirror replication.
+======================================================================

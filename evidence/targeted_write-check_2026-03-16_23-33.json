@@ -1,0 +1,268 @@
+{
+  "mode": "write-check",
+  "captured_at": "2026-03-16T23:33:30.462715+00:00",
+  "mirror_stall_date": "2026-03-05",
+  "results": [
+    {
+      "entity_interact_id": "00006666-fb90-40da-961c-666a158ea9f1",
+      "entity_name": "Abby Winston",
+      "campaign_interact_id": "fd65be58-cce6-400f-97f8-e14adb6558d3",
+      "campaign_name": "california",
+      "write_executed_at": "2026-03-16T23:33:33.334967+00:00",
+      "tags_written": [
+        {
+          "section": "Participation",
+          "field": "Events Attended Past 6 Months",
+          "value": "1",
+          "source_col": "event_participation_summary_tag"
+        },
+        {
+          "section": "Participation",
+          "field": "First Event Attended",
+          "value": "2021-09-27",
+          "source_col": "event_participation_history_tag"
+        },
+        {
+          "section": "Participation",
+          "field": "Most Recent Event Attended",
+          "value": "2026-01-22",
+          "source_col": "event_participation_history_tag"
+        }
+      ],
+      "deletions_performed": [],
+      "before_tagging_count": 0,
+      "after_tagging_count": 0,
+      "new_taggings": [],
+      "removed_taggings": [],
+      "new_tagging_interact_ids_in_bq_mirror": [],
+      "api_response_person_resource": {
+        "origin_system": "Action Builder",
+        "identifiers": [
+          "action_builder:00006666-fb90-40da-961c-666a158ea9f1"
+        ],
+        "created_date": "2026-02-24T16:53:35.755Z",
+        "modified_date": "2026-02-24T22:49:43.530Z",
+        "action_builder:entity_type": "Person",
+        "given_name": "Abby",
+        "family_name": "Winston",
+        "browser_url": "https://commoncause.actionbuilder.org/entity/view/48427/profile?campaignId=12",
+        "preferred_language": "en",
+        "postal_addresses": [
+          {
+            "action_builder:identifier": "action_builder:a05846b1-65c7-4b70-a8a5-a4ec50923703",
+            "address_lines": [
+              "505 S Farrell Dr"
+            ],
+            "locality": "Palm Springs",
+            "region": "CA",
+            "postal_code": "92264",
+            "country": "US",
+            "source": "api",
+            "address_type": "physical"
+          }
+        ],
+        "phone_numbers": [
+          {
+            "action_builder:identifier": "action_builder:2030dc0a-c6b9-4528-b317-997b7272d8df",
+            "number": "15623316077",
+            "number_type": "Mobile",
+            "source": "api"
+          }
+        ],
+        "email_addresses": [
+          {
+            "action_builder:identifier": "action_builder:767c9047-84d4-42d7-b51f-32fddb4bb7b5",
+            "address": "abbyw511@yahoo.com",
+            "address_type": "Home",
+            "source": "api"
+          }
+        ],
+        "_links": {
+          "self": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/00006666-fb90-40da-961c-666a158ea9f1"
+          },
+          "action_builder:campaign": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3"
+          },
+          "action_builder:entity_type": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/entity_types/19c95c01-a5ef-4aed-a5a3-37f70bd77a9f"
+          },
+          "action_builder:connections": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/00006666-fb90-40da-961c-666a158ea9f1/connections"
+          },
+          "osdi:taggings": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/00006666-fb90-40da-961c-666a158ea9f1/taggings"
+          }
+        }
+      },
+      "raw_after_tagging_sample": [],
+      "mirror_staleness_evidence": []
+    },
+    {
+      "entity_interact_id": "000617d2-2448-4c01-b9c1-84979c4c28c5",
+      "entity_name": "Amanda Jones",
+      "campaign_interact_id": "fd65be58-cce6-400f-97f8-e14adb6558d3",
+      "campaign_name": "california",
+      "write_executed_at": "2026-03-16T23:33:39.093454+00:00",
+      "tags_written": [
+        {
+          "section": "Participation",
+          "field": "Action Network Actions",
+          "value": "13",
+          "source_col": "online_actions_past_6_months_tag"
+        }
+      ],
+      "deletions_performed": [],
+      "before_tagging_count": 0,
+      "after_tagging_count": 0,
+      "new_taggings": [],
+      "removed_taggings": [],
+      "new_tagging_interact_ids_in_bq_mirror": [],
+      "api_response_person_resource": {
+        "origin_system": "Action Builder",
+        "identifiers": [
+          "action_builder:000617d2-2448-4c01-b9c1-84979c4c28c5"
+        ],
+        "created_date": "2026-02-24T01:57:28.828Z",
+        "modified_date": "2026-02-24T07:00:16.624Z",
+        "action_builder:entity_type": "Person",
+        "given_name": "Amanda",
+        "family_name": "Jones",
+        "browser_url": "https://commoncause.actionbuilder.org/entity/view/31952/profile?campaignId=12",
+        "preferred_language": "en",
+        "postal_addresses": [
+          {
+            "action_builder:identifier": "action_builder:680cea00-8af6-483a-a56f-e12c8289ca93",
+            "address_lines": [
+              "845 Humboldt St"
+            ],
+            "locality": "Richmond",
+            "region": "CA",
+            "postal_code": "94805",
+            "country": "US",
+            "source": "api",
+            "address_type": "physical"
+          }
+        ],
+        "phone_numbers": [
+          {
+            "action_builder:identifier": "action_builder:8c68a3bd-6826-4313-9343-67126c3655e7",
+            "number": "15107781834",
+            "number_type": "Mobile",
+            "source": "api"
+          }
+        ],
+        "email_addresses": [
+          {
+            "action_builder:identifier": "action_builder:d618b3cb-5b05-4528-8571-5ed52314f6e9",
+            "address": "pndbear@gmail.com",
+            "address_type": "Home",
+            "source": "api"
+          }
+        ],
+        "_links": {
+          "self": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/000617d2-2448-4c01-b9c1-84979c4c28c5"
+          },
+          "action_builder:campaign": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3"
+          },
+          "action_builder:entity_type": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/entity_types/19c95c01-a5ef-4aed-a5a3-37f70bd77a9f"
+          },
+          "action_builder:connections": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/000617d2-2448-4c01-b9c1-84979c4c28c5/connections"
+          },
+          "osdi:taggings": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/000617d2-2448-4c01-b9c1-84979c4c28c5/taggings"
+          }
+        }
+      },
+      "raw_after_tagging_sample": [],
+      "mirror_staleness_evidence": []
+    },
+    {
+      "entity_interact_id": "000707f5-eb38-4e43-8867-96cf30bfe123",
+      "entity_name": "Kevin Mazzocco",
+      "campaign_interact_id": "fd65be58-cce6-400f-97f8-e14adb6558d3",
+      "campaign_name": "california",
+      "write_executed_at": "2026-03-16T23:33:45.028457+00:00",
+      "tags_written": [
+        {
+          "section": "Participation",
+          "field": "Action Network Actions",
+          "value": "18",
+          "source_col": "online_actions_past_6_months_tag"
+        }
+      ],
+      "deletions_performed": [],
+      "before_tagging_count": 0,
+      "after_tagging_count": 0,
+      "new_taggings": [],
+      "removed_taggings": [],
+      "new_tagging_interact_ids_in_bq_mirror": [],
+      "api_response_person_resource": {
+        "origin_system": "Action Builder",
+        "identifiers": [
+          "action_builder:000707f5-eb38-4e43-8867-96cf30bfe123"
+        ],
+        "created_date": "2026-02-24T04:48:08.230Z",
+        "modified_date": "2026-02-24T10:16:34.040Z",
+        "action_builder:entity_type": "Person",
+        "given_name": "Kevin",
+        "family_name": "Mazzocco",
+        "browser_url": "https://commoncause.actionbuilder.org/entity/view/34617/profile?campaignId=12",
+        "preferred_language": "en",
+        "postal_addresses": [
+          {
+            "action_builder:identifier": "action_builder:722ff339-fed6-4a56-9467-6f50a13d4557",
+            "address_lines": [
+              "42128 Saddleback Rd 0564"
+            ],
+            "locality": "Shaver Lake",
+            "region": "CA",
+            "postal_code": "93664",
+            "country": "US",
+            "source": "api",
+            "address_type": "physical"
+          }
+        ],
+        "phone_numbers": [
+          {
+            "action_builder:identifier": "action_builder:76fa002b-f167-47e2-9ca4-a6b06463ba87",
+            "number": "15599992528",
+            "number_type": "Mobile",
+            "source": "api"
+          }
+        ],
+        "email_addresses": [
+          {
+            "action_builder:identifier": "action_builder:377327c5-c189-4d04-8491-f5b845c5be0e",
+            "address": "kevinm@netptc.net",
+            "address_type": "Home",
+            "source": "api"
+          }
+        ],
+        "_links": {
+          "self": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/000707f5-eb38-4e43-8867-96cf30bfe123"
+          },
+          "action_builder:campaign": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3"
+          },
+          "action_builder:entity_type": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/entity_types/19c95c01-a5ef-4aed-a5a3-37f70bd77a9f"
+          },
+          "action_builder:connections": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/000707f5-eb38-4e43-8867-96cf30bfe123/connections"
+          },
+          "osdi:taggings": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/fd65be58-cce6-400f-97f8-e14adb6558d3/people/000707f5-eb38-4e43-8867-96cf30bfe123/taggings"
+          }
+        }
+      },
+      "raw_after_tagging_sample": [],
+      "mirror_staleness_evidence": []
+    }
+  ]
+}

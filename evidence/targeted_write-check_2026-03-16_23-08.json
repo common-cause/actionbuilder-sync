@@ -1,0 +1,274 @@
+{
+  "mode": "write-check",
+  "captured_at": "2026-03-16T23:08:21.480240+00:00",
+  "mirror_stall_date": "2026-03-05",
+  "results": [
+    {
+      "entity_interact_id": "006fa7b0-838f-4c82-9a7a-d7e1f0ed1b49",
+      "entity_name": "Wanda Torrey",
+      "campaign_interact_id": "a41cde2c-a06f-4fed-8073-b544ca9aead7",
+      "campaign_name": "arizona",
+      "write_executed_at": "2026-03-16T23:08:23.701823+00:00",
+      "tags_written": [
+        {
+          "section": "Participation",
+          "field": "Action Network Actions",
+          "value": "30",
+          "source_col": "online_actions_past_6_months_tag"
+        }
+      ],
+      "deletions_performed": [
+        {
+          "tagging_interact_id": "57c77a49-0229-4337-8909-64ea49dcd336",
+          "tag_interact_id": "96658890-7872-4339-bd86-a4148d37b78d",
+          "status": "404"
+        }
+      ],
+      "before_tagging_count": 0,
+      "after_tagging_count": 0,
+      "new_taggings": [],
+      "removed_taggings": [],
+      "new_tagging_interact_ids_in_bq_mirror": [],
+      "api_response_person_resource": {
+        "origin_system": "Action Builder",
+        "identifiers": [
+          "action_builder:006fa7b0-838f-4c82-9a7a-d7e1f0ed1b49"
+        ],
+        "created_date": "2025-09-08T20:06:08.985Z",
+        "modified_date": "2026-03-16T23:05:57.302Z",
+        "action_builder:entity_type": "Person",
+        "given_name": "Wanda",
+        "family_name": "Torrey",
+        "browser_url": "https://commoncause.actionbuilder.org/entity/view/9436/profile?campaignId=19",
+        "preferred_language": "en",
+        "postal_addresses": [
+          {
+            "action_builder:identifier": "action_builder:5b9a6968-46f5-4935-b1f9-8b2bb696933f",
+            "address_lines": [
+              "1851 N Moon Valley Pl"
+            ],
+            "locality": "Tucson",
+            "region": "AZ",
+            "postal_code": "85745",
+            "country": "US",
+            "source": "upload",
+            "address_type": "physical"
+          }
+        ],
+        "phone_numbers": [
+          {
+            "action_builder:identifier": "action_builder:4b8d31ec-5fd1-4821-8c2c-c37b70b7a863",
+            "number": "15207437699",
+            "number_type": "Mobile",
+            "source": "upload"
+          }
+        ],
+        "email_addresses": [
+          {
+            "action_builder:identifier": "action_builder:cefd3705-3b13-461b-b1ad-9c32100eb300",
+            "address": "wanda.torrey@gmail.com",
+            "address_type": "Home",
+            "source": "upload"
+          }
+        ],
+        "_links": {
+          "self": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7/people/006fa7b0-838f-4c82-9a7a-d7e1f0ed1b49"
+          },
+          "action_builder:campaign": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7"
+          },
+          "action_builder:entity_type": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7/entity_types/19c95c01-a5ef-4aed-a5a3-37f70bd77a9f"
+          },
+          "action_builder:connections": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7/people/006fa7b0-838f-4c82-9a7a-d7e1f0ed1b49/connections"
+          },
+          "osdi:taggings": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7/people/006fa7b0-838f-4c82-9a7a-d7e1f0ed1b49/taggings"
+          }
+        }
+      },
+      "raw_after_tagging_sample": [],
+      "mirror_staleness_evidence": []
+    },
+    {
+      "entity_interact_id": "009c2937-36a6-49ad-8f82-53726e4daa2b",
+      "entity_name": "arlene sturm",
+      "campaign_interact_id": "a41cde2c-a06f-4fed-8073-b544ca9aead7",
+      "campaign_name": "arizona",
+      "write_executed_at": "2026-03-16T23:08:27.240142+00:00",
+      "tags_written": [
+        {
+          "section": "Participation",
+          "field": "Action Network Actions",
+          "value": "25",
+          "source_col": "online_actions_past_6_months_tag"
+        }
+      ],
+      "deletions_performed": [
+        {
+          "tagging_interact_id": "15482e1b-e88b-4242-bb3d-01c8707dd94c",
+          "tag_interact_id": "96658890-7872-4339-bd86-a4148d37b78d",
+          "status": "404"
+        }
+      ],
+      "before_tagging_count": 0,
+      "after_tagging_count": 0,
+      "new_taggings": [],
+      "removed_taggings": [],
+      "new_tagging_interact_ids_in_bq_mirror": [],
+      "api_response_person_resource": {
+        "origin_system": "Action Builder",
+        "identifiers": [
+          "action_builder:009c2937-36a6-49ad-8f82-53726e4daa2b"
+        ],
+        "created_date": "2025-09-08T20:06:24.521Z",
+        "modified_date": "2026-03-16T23:06:00.755Z",
+        "action_builder:entity_type": "Person",
+        "given_name": "arlene",
+        "family_name": "sturm",
+        "browser_url": "https://commoncause.actionbuilder.org/entity/view/9596/profile?campaignId=19",
+        "preferred_language": "en",
+        "postal_addresses": [
+          {
+            "action_builder:identifier": "action_builder:a9c63f3b-14aa-4b56-b1ad-633e98fe5391",
+            "address_lines": [
+              "1331 W Whispering Hills Dr # 1331"
+            ],
+            "locality": "Tucson",
+            "region": "AZ",
+            "postal_code": "85704",
+            "country": "US",
+            "source": "upload",
+            "address_type": "physical"
+          }
+        ],
+        "phone_numbers": [
+          {
+            "action_builder:identifier": "action_builder:e351b4c9-3a98-45b3-bce3-3afa7c6093cc",
+            "number": "15208878663",
+            "number_type": "Mobile",
+            "source": "upload"
+          }
+        ],
+        "email_addresses": [
+          {
+            "action_builder:identifier": "action_builder:9a0b6a59-afd0-4824-9536-02ffb17bd3d6",
+            "address": "arlenesturm@gmail.com",
+            "address_type": "Home",
+            "source": "upload"
+          }
+        ],
+        "_links": {
+          "self": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7/people/009c2937-36a6-49ad-8f82-53726e4daa2b"
+          },
+          "action_builder:campaign": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7"
+          },
+          "action_builder:entity_type": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7/entity_types/19c95c01-a5ef-4aed-a5a3-37f70bd77a9f"
+          },
+          "action_builder:connections": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7/people/009c2937-36a6-49ad-8f82-53726e4daa2b/connections"
+          },
+          "osdi:taggings": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7/people/009c2937-36a6-49ad-8f82-53726e4daa2b/taggings"
+          }
+        }
+      },
+      "raw_after_tagging_sample": [],
+      "mirror_staleness_evidence": []
+    },
+    {
+      "entity_interact_id": "00dd5b6f-4364-4040-bd48-c39bf2fd5302",
+      "entity_name": "Anne Hayes",
+      "campaign_interact_id": "a41cde2c-a06f-4fed-8073-b544ca9aead7",
+      "campaign_name": "arizona",
+      "write_executed_at": "2026-03-16T23:08:30.540939+00:00",
+      "tags_written": [
+        {
+          "section": "Participation",
+          "field": "Action Network Actions",
+          "value": "31",
+          "source_col": "online_actions_past_6_months_tag"
+        }
+      ],
+      "deletions_performed": [
+        {
+          "tagging_interact_id": "5f1516da-0016-4ec0-a1d1-b89b29d9d6b5",
+          "tag_interact_id": "96658890-7872-4339-bd86-a4148d37b78d",
+          "status": "404"
+        }
+      ],
+      "before_tagging_count": 0,
+      "after_tagging_count": 0,
+      "new_taggings": [],
+      "removed_taggings": [],
+      "new_tagging_interact_ids_in_bq_mirror": [],
+      "api_response_person_resource": {
+        "origin_system": "Action Builder",
+        "identifiers": [
+          "action_builder:00dd5b6f-4364-4040-bd48-c39bf2fd5302"
+        ],
+        "created_date": "2025-09-08T20:04:58.429Z",
+        "modified_date": "2026-03-16T23:06:04.987Z",
+        "action_builder:entity_type": "Person",
+        "given_name": "Anne",
+        "family_name": "Hayes",
+        "browser_url": "https://commoncause.actionbuilder.org/entity/view/8710/profile?campaignId=19",
+        "preferred_language": "en",
+        "postal_addresses": [
+          {
+            "action_builder:identifier": "action_builder:91d9015e-d39a-4d0f-9c35-459ddf40d6e7",
+            "address_lines": [
+              "14239 E 29th Ln"
+            ],
+            "locality": "Yuma",
+            "region": "AZ",
+            "postal_code": "85367",
+            "country": "US",
+            "source": "upload",
+            "address_type": "physical"
+          }
+        ],
+        "phone_numbers": [
+          {
+            "action_builder:identifier": "action_builder:d45a653d-2d22-48da-b383-4fccb3e75542",
+            "number": "16198401182",
+            "number_type": "Mobile",
+            "source": "upload"
+          }
+        ],
+        "email_addresses": [
+          {
+            "action_builder:identifier": "action_builder:785aad8b-e92d-4bcf-b470-3df3abf5166e",
+            "address": "anne.sullivan@rocketmail.com",
+            "address_type": "Home",
+            "source": "upload"
+          }
+        ],
+        "_links": {
+          "self": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7/people/00dd5b6f-4364-4040-bd48-c39bf2fd5302"
+          },
+          "action_builder:campaign": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7"
+          },
+          "action_builder:entity_type": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7/entity_types/19c95c01-a5ef-4aed-a5a3-37f70bd77a9f"
+          },
+          "action_builder:connections": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7/people/00dd5b6f-4364-4040-bd48-c39bf2fd5302/connections"
+          },
+          "osdi:taggings": {
+            "href": "https://commoncause.actionbuilder.org/api/rest/v1/campaigns/a41cde2c-a06f-4fed-8073-b544ca9aead7/people/00dd5b6f-4364-4040-bd48-c39bf2fd5302/taggings"
+          }
+        }
+      },
+      "raw_after_tagging_sample": [],
+      "mirror_staleness_evidence": []
+    }
+  ]
+}

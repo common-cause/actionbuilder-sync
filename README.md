@@ -8,11 +8,12 @@ Keeps participation data in [ActionBuilder](https://actionbuilder.org) current b
 
 Reads participation records from Mobilize, Action Network, and ScaleToWin, computes the correct tag values for each activist in ActionBuilder, compares them against what ActionBuilder currently shows, and outputs a table of changes. A custom sync script (provided by The Movement Cooperative) reads that table and makes the ActionBuilder API calls.
 
-**Current state (2026-03-12):**
-- Tag updates — active and running; `taggable_logbook` replication stale (TMC issue, workaround TBD)
+**Current state (2026-03-19):**
+- Tag updates — `update_records` now instrumented with sync_log (2026-03-16); not yet run on production schedule pending taggable_logbook fix
 - Deduplication — executed: 154 emails migrated, 91 phones migrated, 8,921 entities removed from campaigns
 - New record insertion — executed: 3,532 entities inserted 2026-03-12
-- Sync log — live: `actionbuilder_sync.sync_log` records API calls so dbt views stay correct despite BQ replication gaps
+- Sync log — live: `actionbuilder_sync.sync_log` records API calls for remove_records, insert_new_records, update_records, and cleanup_duplicate_tags
+- AB mirror bug — evidence captured 2026-03-16/17 (`evidence/` dir); AB bug filed with Willy; taggable_logbook stale since 2026-03-05
 
 ---
 
@@ -115,7 +116,12 @@ ActionBuilder Sync/
 │
 ├── scripts/                    # Python sync scripts
 │   ├── sync.py                 # Main sync script (all operations)
+│   ├── cleanup_duplicate_tags.py  # Standalone: delete duplicate taggings, instruments sync_log
+│   ├── capture_ab_evidence.py  # One-time: generate AB bug report JSON (mirror staleness)
+│   ├── targeted_evidence.py    # One-time: deletion-check and write-check evidence modes
 │   └── create_sync_log.sql     # One-time DDL to create sync_log table (already run)
+│
+├── evidence/                   # Output from evidence scripts (gitignored JSON/TXT reports)
 │
 ├── docs/
 │   ├── sync_overview.md        # Detailed sync architecture, field formats, known issues
@@ -164,7 +170,8 @@ ActionBuilder DB ──► (actionbuilder_cleaned.*) ──► current_tag_value
 
 ## Key Files Outside This Repo
 
-- **The sync script** — `scripts/sync.py` in this repo; reads dbt views and makes AB API calls. Operations: `update_records`, `insert_new_records`, `remove_records`, `prepare_email_data`, `prepare_phone_data`, `apply_assessments`.
+- **The sync script** — `scripts/sync.py` in this repo; reads dbt views and makes AB API calls. Operations: `update_records`, `insert_new_records`, `remove_records`, `prepare_email_data`, `prepare_phone_data`, `apply_assessments`. All write operations log to `sync_log`.
+- **Duplicate tag cleanup** — `scripts/cleanup_duplicate_tags.py`; standalone script that deletes duplicate taggings via the AB API and logs `delete_tagging` operations to `sync_log`. Also deployed as `civis/cleanup_duplicate_tags.sh`.
 - **Credentials** — stored in `.env` (gitignored). The `BIGQUERY_CREDENTIALS_PASSWORD` env var holds the full service account JSON.
 - **ccef-connections library** — at `../AI Interpretation/ccef-connections`; provides BigQuery, Airtable, Zoom, Sheets, Action Network connectors. Used for any Python scripts that need to query BigQuery directly.
 
@@ -200,5 +207,6 @@ The MCP connects to `proj-tmc-mem-com` using the shared `BIGQUERY_CREDENTIALS_PA
 6. **[Done]** Dedup execution — 8,921 entities removed from campaigns, 3,532 new entities inserted (2026-03-12)
 7. **[Done]** Sync log architecture — `sync_log` BQ table + dbt wrapper views compensate for BQ replication gaps; sync.py instruments remove_records and insert_new_records
 8. **[Active]** Resolve open `dedup_unresolved` pairs (currently 16 same-campaign ambiguous pairs)
-9. **[Active / TMC-blocked]** `taggable_logbook` replication fix — table too large for TMC's query window; `current_tag_values` and `updates_needed` work from stale data until resolved. Workaround path TBD.
-10. **[Future]** New data flows: Airtable, Zoom, Mobilize relational organizing campaign
+9. **[Active / AB-blocked]** `taggable_logbook` replication fix — AB's own internal SQL mirror stalled at 2026-03-05 (table too large); bug filed with AB directly (Willy). Evidence captured 2026-03-16/17. `current_tag_values` and `updates_needed` work from stale data until resolved.
+10. **[Pending fix]** Run `update_records` on production schedule — blocked until `taggable_logbook` mirror is fixed; script is ready and instrumented with sync_log.
+11. **[Future]** New data flows: Airtable, Zoom, Mobilize relational organizing campaign
