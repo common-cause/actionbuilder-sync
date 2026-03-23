@@ -202,7 +202,7 @@ class SyncLogger:
             'tag_name': tag_name,
             'value_written': value_written,
             'executed_at': datetime.now(timezone.utc).isoformat(),
-            'status': status,
+            'status': status or 'unknown',
             'error_detail': error_detail,
         })
         if len(self._pending) >= self.BATCH_SIZE:
@@ -218,7 +218,7 @@ class SyncLogger:
             self._bq.insert_rows(self.TABLE, batch)
             logger.debug(f'SyncLogger: flushed {len(batch)} rows to sync_log')
         except Exception as e:
-            logger.warning(f'SyncLogger: failed to flush {len(batch)} rows: {e}')
+            logger.error(f'SyncLogger: failed to flush {len(batch)} rows: {e}')
 
 
 def _resolve_campaign_arg(value: Optional[str]) -> Optional[str]:
@@ -442,6 +442,7 @@ def update_records(
     dry_run: bool,
     limit: Optional[int],
     sync_logger: Optional[SyncLogger] = None,
+    delay: float = 0.0,
 ) -> None:
     """
     Update tags on existing ActionBuilder entities.
@@ -564,6 +565,9 @@ def update_records(
         except Exception as e:
             logger.error(f'  ERROR updating {label}: {e}')
             n_err += 1
+
+        if delay:
+            time.sleep(delay)
 
     logger.info(
         f'update_records: done. '
@@ -1227,7 +1231,7 @@ def main() -> None:
 
     op_fn = OPERATIONS[args.operation]
     kwargs: Dict[str, Any] = {}
-    if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state'):
+    if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state', 'update_records'):
         kwargs['delay'] = args.delay
     if args.operation in ('remove_records', 'insert_new_records', 'update_records', 'snapshot_tag_state'):
         kwargs['sync_logger'] = sync_logger
