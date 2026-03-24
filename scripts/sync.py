@@ -931,20 +931,27 @@ def apply_assessments(
     campaign_filter: Optional[str],
     dry_run: bool,
     limit: Optional[int],
+    delay: float = 0.0,
+    sync_logger: Optional[SyncLogger] = None,
 ) -> None:
     """
     Write automated assessment levels to ActionBuilder entities.
 
     Reads actionbuilder_sync.auto_assessment_rules. The view enforces the
-    write policy (no existing assessment, level 0, or level 1 set by the
-    API user) and only emits upgrade candidates. For each row, calls
-    update_person to set action_builder:latest_assessment.
+    write policy (should_write=TRUE only for: no existing assessment, level 0,
+    or level 1 set by the API user id=3) and only emits upgrade candidates.
+    For each row, calls update_person to set action_builder:latest_assessment.
     """
     logger.info('apply_assessments: fetching rows from auto_assessment_rules...')
+    where_clauses = ['should_write = TRUE']
+    if campaign_filter:
+        where_clauses.append(f"campaign_interact_id = '{campaign_filter}'")
+    where_sql = ' AND '.join(where_clauses)
     sql = (
-        f'SELECT entity_interact_id, campaign_interact_id, suggested_level, '
-        f'qualification_reason '
-        f'FROM `{BQ_PROJECT}.{BQ_DATASET}.auto_assessment_rules`'
+        f'SELECT entity_id, campaign_interact_id, recommended_level, '
+        f'current_level, qualification_reasons '
+        f'FROM `{BQ_PROJECT}.{BQ_DATASET}.auto_assessment_rules` '
+        f'WHERE {where_sql}'
     )
     if limit:
         sql += f' LIMIT {limit}'
@@ -954,26 +961,23 @@ def apply_assessments(
         logger.info('apply_assessments: no entities to assess')
         return
 
-    logger.info(f'apply_assessments: {len(rows)} entities to consider')
+    logger.info(f'apply_assessments: {len(rows)} entities to write')
     n_ok = n_err = n_skip = 0
 
     for row in rows:
-        entity_id = str(row['entity_interact_id'])
-        campaign_id = row.get('campaign_interact_id')
-        level = row.get('suggested_level')
-        reason = row.get('qualification_reason', 'unknown')
+        entity_id = str(row['entity_id'])
+        campaign_id = str(row['campaign_interact_id'])
+        level = row['recommended_level']
+        current = row.get('current_level', 0)
+        reason = row.get('qualification_reasons', 'unknown')
         label = (
             f'entity={entity_id[:8]}... '
-            f'campaign={str(campaign_id)[:8]}... '
-            f'level={level} ({reason})'
+            f'campaign={campaign_id[:8]}... '
+            f'level={current}->{level} ({reason})'
         )
 
-        if not campaign_id:
-            logger.warning(f'  Skipping {label}: no campaign')
-            n_skip += 1
-            continue
-
-        if campaign_filter and str(campaign_id) != campaign_filter:
+        if not entity_id or not campaign_id:
+            logger.warning(f'  Skipping {label}: missing id')
             n_skip += 1
             continue
 
@@ -984,15 +988,34 @@ def apply_assessments(
 
         try:
             ab.update_person(
-                str(campaign_id),
+                campaign_id,
                 entity_id,
                 {'action_builder:latest_assessment': level},
             )
             logger.debug(f'  Assessed {label}')
             n_ok += 1
+            if sync_logger:
+                sync_logger.log(
+                    operation='set_assessment',
+                    entity_interact_id=entity_id,
+                    campaign_interact_id=campaign_id,
+                    status='ok',
+                    value_written=str(level),
+                )
         except Exception as e:
             logger.error(f'  ERROR assessing {label}: {e}')
             n_err += 1
+            if sync_logger:
+                sync_logger.log(
+                    operation='set_assessment',
+                    entity_interact_id=entity_id,
+                    campaign_interact_id=campaign_id,
+                    status='error',
+                    error_detail=str(e)[:500],
+                )
+
+        if delay > 0:
+            time.sleep(delay)
 
     logger.info(f'apply_assessments: done. ok={n_ok} err={n_err} skipped={n_skip}')
 
@@ -1231,9 +1254,9 @@ def main() -> None:
 
     op_fn = OPERATIONS[args.operation]
     kwargs: Dict[str, Any] = {}
-    if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state', 'update_records'):
+    if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state', 'update_records', 'apply_assessments'):
         kwargs['delay'] = args.delay
-    if args.operation in ('remove_records', 'insert_new_records', 'update_records', 'snapshot_tag_state'):
+    if args.operation in ('remove_records', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments'):
         kwargs['sync_logger'] = sync_logger
     op_fn(bq, ab, campaign_filter, args.dry_run, args.limit, **kwargs)
 

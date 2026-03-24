@@ -1,23 +1,20 @@
--- Automated assessment level recommendations for AB entities.
+-- auto_assessment_rules: computes recommended assessment level per entity+campaign
 --
--- Write policy (enforced here — entities that fail are excluded):
---   - Only write if: no existing assessment, level=0, or level=1 AND created_by_id=3 (Rob/API)
---   - Never write to entities where a human organizer set level >= 1
---   - Only upgrade, never downgrade (suggested_level > current_level)
---
--- Level 1 criteria (any one of):
---   - Any Mobilize event attendance (all-time)
+-- Level 1 (any one of):
+--   - Any Mobilize attendance (events_6m >= 1 or any all-time attendance)
 --   - Any NewMode submission
---   - Any ScaleToWin phone bank call
+--   - Any ScaleToWin call
 --   - 20+ AN actions in past 6 months
 --
--- Level 2 criteria (any one of):
+-- Level 2 (any one of):
 --   - 2+ ScaleToWin calls
---   - 2+ digital (virtual) Mobilize event attendances (all-time)
+--   - 2+ digital Mobilize events (is_virtual = TRUE)
 --   - Any in-person Common Cause Mobilize event (organization_id = 6600)
 --
--- Output: one row per entity needing an assessment write.
--- Sync operation: apply_assessments in scripts/sync.py
+-- Write policy (enforced here, not in sync script):
+--   - Only upgrade, never downgrade
+--   - Never overwrite assessments set by human organizers (created_by_id != 3)
+--   - Safe to overwrite: no assessment, level=0, or level=1 set by created_by_id=3
 
 WITH all_entity_emails AS (
   SELECT
@@ -40,116 +37,73 @@ all_entity_phones AS (
     AND LENGTH(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(number, r'^\+', ''), r'^1', ''), r'[^\d]', '')) = 10
 ),
 
--- Current assessments for write-policy check
-latest_assessments AS (
-  SELECT
-    owner_id as entity_id,
-    level,
-    created_by_id,
-    ROW_NUMBER() OVER (PARTITION BY owner_id ORDER BY utc_created_at DESC) as rn
-  FROM actionbuilder_cleaned.cln_actionbuilder__assessments
-  WHERE owner_type = 'Entity'
-),
-
-current_assessments AS (
-  SELECT entity_id, level, created_by_id
-  FROM latest_assessments
-  WHERE rn = 1
-),
-
--- Write-policy filter: entities we are allowed to assess
-write_eligible_entities AS (
-  SELECT e.id as entity_id
-  FROM actionbuilder_cleaned.cln_actionbuilder__entities e
-  LEFT JOIN current_assessments ca ON e.id = ca.entity_id
-  WHERE ca.entity_id IS NULL                           -- no assessment yet
-    OR ca.level = 0                                    -- level 0 (unassessed)
-    OR (ca.level = 1 AND ca.created_by_id = 3)         -- level 1 from Rob/API, safe to overwrite
-),
-
--- Level 1: any Mobilize attendance (all-time)
-mobilize_any AS (
-  SELECT DISTINCT aee.entity_id
-  FROM all_entity_emails aee
-  INNER JOIN mobilize_cleaned.cln_mobilize__participations mp
-    ON aee.email_normalized = LOWER(TRIM(mp.user__email_address))
-  WHERE mp.attended = True
-),
-
--- Level 1: any NewMode submission
-newmode_any AS (
-  SELECT DISTINCT aee.entity_id
-  FROM all_entity_emails aee
-  INNER JOIN newmode_cleaned.cln_newmode__submissions nm
-    ON aee.email_normalized = LOWER(TRIM(nm.contact_email))
-  WHERE nm.testmode IS DISTINCT FROM TRUE
-),
-
--- Level 1: any ScaleToWin call
-stw_any AS (
-  SELECT DISTINCT aep.entity_id
-  FROM all_entity_phones aep
-  INNER JOIN {{ ref('scaletowin_call_data') }} scd
-    ON aep.number_normalized = scd.caller_phone_number
-  WHERE scd.phone_bank_calls_made >= 1
-),
-
--- Level 1: 20+ AN actions in past 6 months
-an_20plus AS (
-  SELECT DISTINCT aee.entity_id
-  FROM all_entity_emails aee
-  INNER JOIN {{ ref('action_network_6mo_actions') }} an6
-    ON aee.email_normalized = an6.email_normalized
-  WHERE an6.total_actions_6_months >= 20
-),
-
--- Level 2: 2+ ScaleToWin calls
-stw_repeated AS (
-  SELECT DISTINCT aep.entity_id
-  FROM all_entity_phones aep
-  INNER JOIN {{ ref('scaletowin_call_data') }} scd
-    ON aep.number_normalized = scd.caller_phone_number
-  WHERE scd.phone_bank_calls_made >= 2
-),
-
--- Level 2: 2+ digital Mobilize events attended (all-time)
-digital_mobilize_counts AS (
+-- Mobilize: total events 6m, digital events 6m, any in-person CC event
+mobilize_by_entity AS (
   SELECT
     aee.entity_id,
-    COUNT(DISTINCT mp.event_id) as digital_event_count
+    COUNT(DISTINCT CASE
+      WHEN DATE(COALESCE(p.utc_override_start_date, p.utc_start_date)) >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)
+      THEN p.event_id
+    END) as mobilize_events_6m,
+    COUNT(DISTINCT CASE
+      WHEN DATE(COALESCE(p.utc_override_start_date, p.utc_start_date)) >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)
+        AND e.is_virtual = TRUE
+      THEN p.event_id
+    END) as digital_mobilize_events_6m,
+    COUNT(DISTINCT CASE
+      WHEN e.organization_id = 6600 AND e.is_virtual = FALSE
+      THEN p.event_id
+    END) as in_person_cc_events_all_time,
+    COUNT(DISTINCT p.event_id) as mobilize_events_all_time
   FROM all_entity_emails aee
-  INNER JOIN mobilize_cleaned.cln_mobilize__participations mp
-    ON aee.email_normalized = LOWER(TRIM(mp.user__email_address))
-  INNER JOIN mobilize_cleaned.cln_mobilize__events me
-    ON mp.event_id = me.id
-  WHERE mp.attended = True
-    AND me.is_virtual = True
+  INNER JOIN mobilize_cleaned.cln_mobilize__participations p
+    ON aee.email_normalized = LOWER(TRIM(COALESCE(p.user__email_address, p.email_at_signup)))
+  INNER JOIN mobilize_cleaned.cln_mobilize__events e
+    ON p.event_id = e.id
+  WHERE p.status NOT IN ('CANCELLED')
+    AND COALESCE(p.utc_override_start_date, p.utc_start_date) IS NOT NULL
+    AND DATE(COALESCE(p.utc_override_start_date, p.utc_start_date)) <= CURRENT_DATE()
   GROUP BY aee.entity_id
 ),
 
-digital_mobilize_2plus AS (
-  SELECT entity_id
-  FROM digital_mobilize_counts
-  WHERE digital_event_count >= 2
-),
-
--- Level 2: any in-person Common Cause Mobilize event (org_id 6600)
-inperson_cc_mobilize AS (
-  SELECT DISTINCT aee.entity_id
+-- AN actions in past 6 months
+an_by_entity AS (
+  SELECT
+    aee.entity_id,
+    SUM(an6.total_actions_6_months) as an_actions_6m
   FROM all_entity_emails aee
-  INNER JOIN mobilize_cleaned.cln_mobilize__participations mp
-    ON aee.email_normalized = LOWER(TRIM(mp.user__email_address))
-  INNER JOIN mobilize_cleaned.cln_mobilize__events me
-    ON mp.event_id = me.id
-  WHERE mp.attended = True
-    AND me.is_virtual = False
-    AND me.organization_id = 6600
+  INNER JOIN {{ ref('action_network_6mo_actions') }} an6
+    ON aee.email_normalized = an6.email_normalized
+  GROUP BY aee.entity_id
 ),
 
--- Campaign lookup (one active non-Test campaign per entity)
-entity_campaigns AS (
-  SELECT DISTINCT
+-- NewMode submissions (any = qualifies)
+newmode_by_entity AS (
+  SELECT
+    aee.entity_id,
+    SUM(nma.newmode_submission_count) as newmode_submissions
+  FROM all_entity_emails aee
+  INNER JOIN {{ ref('newmode_actions') }} nma
+    ON aee.email_normalized = nma.email_normalized
+  GROUP BY aee.entity_id
+),
+
+-- ScaleToWin calls
+stw_by_entity AS (
+  SELECT
+    aep.entity_id,
+    SUM(scd.phone_bank_calls_made) as stw_calls
+  FROM all_entity_phones aep
+  INNER JOIN {{ ref('scaletowin_call_data') }} scd
+    ON aep.number_normalized = scd.caller_phone_number
+  GROUP BY aep.entity_id
+),
+
+-- Entities in active campaigns
+entities_in_campaigns AS (
+  SELECT
     ce.entity_id,
+    ce.campaign_id,
     c.interact_id as campaign_interact_id
   FROM actionbuilder_cleaned.cln_actionbuilder__campaigns_entities ce
   INNER JOIN actionbuilder_cleaned.cln_actionbuilder__campaigns c
@@ -158,63 +112,110 @@ entity_campaigns AS (
     AND c.name != 'Test'
 ),
 
--- Compute suggested level for each write-eligible entity
-assessment_candidates AS (
+-- Current assessment: latest row per entity+campaign
+current_assessments AS (
+  SELECT entity_id, campaign_id, level, created_by_id
+  FROM (
+    SELECT
+      owner_id as entity_id, campaign_id, level, created_by_id,
+      ROW_NUMBER() OVER (
+        PARTITION BY owner_id, campaign_id
+        ORDER BY utc_updated_at DESC
+      ) as rn
+    FROM actionbuilder_cleaned.cln_actionbuilder__assessments
+    WHERE owner_type = 'Entity'
+  )
+  WHERE rn = 1
+),
+
+-- Compute recommended level per entity
+entity_levels AS (
   SELECT
-    we.entity_id,
+    eic.entity_id,
+    eic.campaign_id,
+    eic.campaign_interact_id,
+
+    -- Level 2 qualification flags
+    COALESCE(stw.stw_calls, 0) >= 2 as l2_stw_calls,
+    COALESCE(mob.digital_mobilize_events_6m, 0) >= 2 as l2_digital_mobilize,
+    COALESCE(mob.in_person_cc_events_all_time, 0) >= 1 as l2_in_person_cc,
+
+    -- Level 1 qualification flags
+    COALESCE(mob.mobilize_events_6m, 0) >= 1
+      OR COALESCE(mob.mobilize_events_all_time, 0) >= 1 as l1_mobilize,
+    COALESCE(nmo.newmode_submissions, 0) >= 1 as l1_newmode,
+    COALESCE(stw.stw_calls, 0) >= 1 as l1_stw,
+    COALESCE(an.an_actions_6m, 0) >= 20 as l1_an_actions,
+
+    -- Current assessment state
     ca.level as current_level,
-    ca.created_by_id as current_created_by_id,
+    ca.created_by_id as current_created_by_id
 
+  FROM entities_in_campaigns eic
+  LEFT JOIN mobilize_by_entity mob ON mob.entity_id = eic.entity_id
+  LEFT JOIN an_by_entity an ON an.entity_id = eic.entity_id
+  LEFT JOIN newmode_by_entity nmo ON nmo.entity_id = eic.entity_id
+  LEFT JOIN stw_by_entity stw ON stw.entity_id = eic.entity_id
+  LEFT JOIN current_assessments ca
+    ON ca.entity_id = eic.entity_id AND ca.campaign_id = eic.campaign_id
+),
+
+recommended AS (
+  SELECT
+    entity_id,
+    campaign_id,
+    campaign_interact_id,
+    current_level,
+    current_created_by_id,
+
+    -- Recommended level
     CASE
-      WHEN (stw_r.entity_id IS NOT NULL
-            OR dm2.entity_id IS NOT NULL
-            OR ipcm.entity_id IS NOT NULL)
-        THEN 2
-      WHEN (mob.entity_id IS NOT NULL
-            OR nm.entity_id IS NOT NULL
-            OR stw.entity_id IS NOT NULL
-            OR an20.entity_id IS NOT NULL)
-        THEN 1
-      ELSE NULL
-    END as suggested_level,
+      WHEN l2_stw_calls OR l2_digital_mobilize OR l2_in_person_cc THEN 2
+      WHEN l1_mobilize OR l1_newmode OR l1_stw OR l1_an_actions THEN 1
+      ELSE 0
+    END as recommended_level,
 
-    -- Most specific qualifying reason (for logging)
-    CASE
-      WHEN stw_r.entity_id IS NOT NULL  THEN '2+ STW calls'
-      WHEN dm2.entity_id IS NOT NULL    THEN '2+ digital Mobilize events'
-      WHEN ipcm.entity_id IS NOT NULL   THEN 'In-person CC Mobilize event'
-      WHEN mob.entity_id IS NOT NULL    THEN 'Mobilize attendance'
-      WHEN nm.entity_id IS NOT NULL     THEN 'NewMode submission'
-      WHEN stw.entity_id IS NOT NULL    THEN 'ScaleToWin call'
-      WHEN an20.entity_id IS NOT NULL   THEN '20+ AN actions'
-      ELSE NULL
-    END as qualification_reason
+    -- Qualification reasons (for debugging)
+    ARRAY_TO_STRING(ARRAY_CONCAT(
+      IF(l2_stw_calls, ['2+ STW calls'], []),
+      IF(l2_digital_mobilize, ['2+ digital Mobilize'], []),
+      IF(l2_in_person_cc, ['In-person CC event'], []),
+      IF(l1_mobilize, ['Mobilize attendance'], []),
+      IF(l1_newmode, ['NewMode submission'], []),
+      IF(l1_stw, ['STW call'], []),
+      IF(l1_an_actions, ['20+ AN actions'], [])
+    ), ', ') as qualification_reasons
 
-  FROM write_eligible_entities we
-  LEFT JOIN current_assessments ca   ON we.entity_id = ca.entity_id
-  LEFT JOIN mobilize_any mob         ON we.entity_id = mob.entity_id
-  LEFT JOIN newmode_any nm           ON we.entity_id = nm.entity_id
-  LEFT JOIN stw_any stw              ON we.entity_id = stw.entity_id
-  LEFT JOIN an_20plus an20           ON we.entity_id = an20.entity_id
-  LEFT JOIN stw_repeated stw_r       ON we.entity_id = stw_r.entity_id
-  LEFT JOIN digital_mobilize_2plus dm2  ON we.entity_id = dm2.entity_id
-  LEFT JOIN inperson_cc_mobilize ipcm   ON we.entity_id = ipcm.entity_id
+  FROM entity_levels
+),
+
+entity_interact_ids AS (
+  SELECT id as entity_id_int, interact_id as entity_interact_id
+  FROM actionbuilder_cleaned.cln_actionbuilder__entities
 )
 
 SELECT
-  ac.entity_id,
-  (SELECT e.interact_id
-   FROM actionbuilder_cleaned.cln_actionbuilder__entities e
-   WHERE e.id = ac.entity_id) as entity_interact_id,
-  ec.campaign_interact_id,
-  ac.current_level,
-  ac.suggested_level,
-  ac.qualification_reason
+  r.campaign_id,
+  r.campaign_interact_id,
+  eii.entity_interact_id as entity_id,
+  r.recommended_level,
+  COALESCE(r.current_level, 0) as current_level,
+  r.current_created_by_id,
+  r.qualification_reasons,
 
-FROM assessment_candidates ac
-INNER JOIN entity_campaigns ec ON ac.entity_id = ec.entity_id  -- must be in an active campaign
+  -- Write policy: should we actually write this?
+  CASE
+    -- No existing assessment — safe to write
+    WHEN r.current_level IS NULL THEN TRUE
+    -- Current is 0 — safe to write
+    WHEN r.current_level = 0 THEN TRUE
+    -- Current is level 1 set by API user (id=3) — safe to upgrade
+    WHEN r.current_level = 1 AND r.current_created_by_id = 3 THEN TRUE
+    -- Current was set by a human organizer — do not touch
+    ELSE FALSE
+  END as should_write
 
-WHERE ac.suggested_level IS NOT NULL
-  AND (ac.current_level IS NULL OR ac.suggested_level > ac.current_level)  -- only upgrade
-
-ORDER BY ac.suggested_level DESC, ac.entity_id
+FROM recommended r
+LEFT JOIN entity_interact_ids eii ON eii.entity_id_int = r.entity_id
+WHERE r.recommended_level > COALESCE(r.current_level, 0)
+ORDER BY r.campaign_id, r.entity_id
