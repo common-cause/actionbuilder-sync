@@ -583,6 +583,7 @@ def insert_new_records(
     dry_run: bool,
     limit: Optional[int],
     sync_logger: Optional[SyncLogger] = None,
+    delay: float = 0.0,
 ) -> None:
     """
     Insert genuinely new entities into ActionBuilder.
@@ -693,6 +694,9 @@ def insert_new_records(
             if sync_logger:
                 sync_logger.log('insert_entity', None, campaign_id, 'error',
                                 person_id=pid, error_detail=str(e)[:500])
+
+        if delay > 0:
+            time.sleep(delay)
 
     logger.info(f'insert_new_records: done. ok={n_ok} err={n_err} skipped={n_skip}')
 
@@ -1254,7 +1258,7 @@ def main() -> None:
 
     op_fn = OPERATIONS[args.operation]
     kwargs: Dict[str, Any] = {}
-    if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state', 'update_records', 'apply_assessments'):
+    if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records'):
         kwargs['delay'] = args.delay
     if args.operation in ('remove_records', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments'):
         kwargs['sync_logger'] = sync_logger
