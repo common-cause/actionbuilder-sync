@@ -93,6 +93,10 @@ SELECT
     WHEN tag_name = 'NewMode Actions'                         THEN 'Participation:|:Online Actions Past 6 Months:|:NewMode Actions:|:number_response'
     WHEN tag_name = 'Top National Action Network Activist'    THEN 'Participation:|:National Online Actions:|:Top National Action Network Activist:|:standard_response'
     WHEN tag_name = 'Hot Prospect'                            THEN 'Engagement:|:Prospect Identification:|:Hot Prospect:|:standard_response'
+    WHEN tag_name = 'Organizing Basics'                       THEN 'Activism:|:Organizing for Power:|:Organizing Basics:|:standard_response'
+    WHEN tag_name = 'Storytelling'                            THEN 'Activism:|:Organizing for Power:|:Storytelling:|:standard_response'
+    WHEN tag_name = 'Relational Organizing'                   THEN 'Activism:|:Organizing for Power:|:Relational Organizing:|:standard_response'
+    WHEN tag_name = 'Rapid Response Basics'                   THEN 'Activism:|:Organizing for Power:|:Rapid Response Basics:|:standard_response'
     ELSE CONCAT(tag_name, ':|:', tag_type, '_response')
   END as sync_field_identifier
 

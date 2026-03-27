@@ -56,7 +56,11 @@ current_ab_values AS (
     'Phone Bank Calls Made',
     'NewMode Actions',
     'Top National Action Network Activist',
-    'Hot Prospect'
+    'Hot Prospect',
+    'Organizing Basics',
+    'Storytelling',
+    'Relational Organizing',
+    'Rapid Response Basics'
   )
 ),
 
@@ -363,6 +367,20 @@ updates_to_apply AS (
     removal_ids_hot_prospect as removal_ids
   FROM value_comparisons
   WHERE hot_prospect_needs_update = TRUE
+
+  UNION ALL
+
+  -- OFP training tags (additive multiselect — never removes, only adds missing)
+  SELECT
+    campaign_id,
+    entity_id,
+    field_name,
+    field_group,
+    sync_string,
+    current_value,
+    correct_value,
+    removal_ids
+  FROM {{ ref('ofp_attendance') }}
 ),
 
 entity_interact_ids AS (
@@ -418,6 +436,11 @@ SELECT
     THEN sync_string
     ELSE NULL
   END as engagement_tag,
+  CASE
+    WHEN field_group = 'Organizing for Power' AND correct_value != ''
+    THEN sync_string
+    ELSE NULL
+  END as ofp_tag,
 
   -- _tag_remove columns: existing tagging to delete before adding new value
   -- Format: tag-interact-id:|:tagging-interact-id
@@ -452,6 +475,8 @@ SELECT
     THEN removal_ids
     ELSE NULL
   END as engagement_tag_remove,
+  -- OFP is additive-only (multiselect); removal is always NULL
+  CAST(NULL AS STRING) as ofp_tag_remove,
 
   current_value,
   correct_value,

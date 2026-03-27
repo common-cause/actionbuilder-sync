@@ -88,6 +88,7 @@ TAG_COLS = [
     'state_online_actions_tag',
     'national_online_actions_tag',
     'engagement_tag',
+    'ofp_tag',
 ]
 REMOVE_COLS = [c + '_remove' for c in TAG_COLS]
 
