@@ -60,7 +60,12 @@ current_ab_values AS (
     'Organizing Basics',
     'Storytelling',
     'Relational Organizing',
-    'Rapid Response Basics'
+    'Rapid Response Basics',
+    'Leader',
+    'Host',
+    'Participant',
+    'Total Conversations',
+    'Host Prospect'
   )
 ),
 
@@ -381,6 +386,62 @@ updates_to_apply AS (
     correct_value,
     removal_ids
   FROM {{ ref('ofp_attendance') }}
+
+  UNION ALL
+
+  -- 1MC Campaign Role tags (additive multiselect — never removes, only adds missing)
+  SELECT
+    campaign_id,
+    entity_id,
+    field_name,
+    field_group,
+    sync_string,
+    current_value,
+    correct_value,
+    removal_ids
+  FROM {{ ref('1mc_role_attendance') }}
+
+  UNION ALL
+
+  -- 1MC Total Conversations per Host (number, updates when value changes)
+  SELECT
+    campaign_id,
+    entity_id,
+    field_name,
+    field_group,
+    sync_string,
+    current_value,
+    correct_value,
+    removal_ids
+  FROM {{ ref('1mc_total_conversations') }}
+
+  UNION ALL
+
+  -- 1MC Participant tags (additive — never removes, only adds missing)
+  SELECT
+    campaign_id,
+    entity_id,
+    field_name,
+    field_group,
+    sync_string,
+    current_value,
+    correct_value,
+    removal_ids
+  FROM {{ ref('1mc_participants') }}
+
+  UNION ALL
+
+  -- 1MC Host Prospect tags (additive — never removes, only adds missing)
+  SELECT
+    campaign_id,
+    entity_id,
+    field_name,
+    field_group,
+    sync_string,
+    current_value,
+    correct_value,
+    removal_ids
+  FROM {{ ref('1mc_prospects') }}
 ),
 
 entity_interact_ids AS (
@@ -441,6 +502,21 @@ SELECT
     THEN sync_string
     ELSE NULL
   END as ofp_tag,
+  CASE
+    WHEN field_group = 'Million Conversations Role' AND correct_value != ''
+    THEN sync_string
+    ELSE NULL
+  END as million_conversations_role_tag,
+  CASE
+    WHEN field_group = 'Total Conversations' AND correct_value != ''
+    THEN sync_string
+    ELSE NULL
+  END as million_conversations_activity_tag,
+  CASE
+    WHEN field_group = 'Million Conversations Prospect' AND correct_value != ''
+    THEN sync_string
+    ELSE NULL
+  END as million_conversations_prospect_tag,
 
   -- _tag_remove columns: existing tagging to delete before adding new value
   -- Format: tag-interact-id:|:tagging-interact-id
@@ -477,6 +553,16 @@ SELECT
   END as engagement_tag_remove,
   -- OFP is additive-only (multiselect); removal is always NULL
   CAST(NULL AS STRING) as ofp_tag_remove,
+  -- 1MC Campaign Role is additive-only (multiselect); removal is always NULL
+  CAST(NULL AS STRING) as million_conversations_role_tag_remove,
+  -- 1MC Total Conversations: remove old value before writing new one
+  CASE
+    WHEN field_group = 'Total Conversations' AND current_value != '' AND current_value != '0'
+    THEN removal_ids
+    ELSE NULL
+  END as million_conversations_activity_tag_remove,
+  -- 1MC Prospect is additive-only; removal is always NULL
+  CAST(NULL AS STRING) as million_conversations_prospect_tag_remove,
 
   current_value,
   correct_value,

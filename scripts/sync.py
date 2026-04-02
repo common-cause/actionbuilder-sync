@@ -9,6 +9,7 @@ Operations:
     prepare_email_data  Add secondary emails to keeper entities (reads email_migration_needed)
     prepare_phone_data  Add secondary phones to keeper entities (reads phone_migration_needed)
     apply_assessments   Write auto-assessment levels to entities (reads auto_assessment_rules)
+    append_notes        Append 1MC conversation notes to entities (reads 1mc_notes)
     snapshot_tag_state  One-time: query AB API for current tag state and log to sync_log
 
 Usage:
@@ -1179,6 +1180,114 @@ def snapshot_tag_state(
 # CLI
 # ---------------------------------------------------------------------------
 
+def append_notes(
+    bq: BigQueryConnector,
+    ab: Optional[ActionBuilderConnector],
+    campaign_filter: Optional[str],
+    dry_run: bool,
+    limit: Optional[int],
+    delay: float = 0.0,
+    sync_logger: Optional[SyncLogger] = None,
+) -> None:
+    """
+    Append 1MC conversation notes to ActionBuilder entities.
+
+    Reads actionbuilder_sync.1mc_notes. Each row contains a pre-formatted note
+    body, the target entity/campaign, and the response name (Event Host Notes,
+    Conversation Host Notes, or Event Attendee Notes). Calls ab.append_note()
+    for each row.
+
+    Idempotency: the dbt view filters out _airtable_record_id values already
+    logged with operation='append_note' and status='ok'. The sync_log tag_name
+    column stores the composite key '{airtable_record_id}:{response_name}'.
+    """
+    logger.info('append_notes: fetching rows from 1mc_notes...')
+    where_clauses = []
+    if campaign_filter:
+        where_clauses.append(f"campaign_interact_id = '{campaign_filter}'")
+    where_sql = f'WHERE {" AND ".join(where_clauses)}' if where_clauses else ''
+    sql = (
+        f'SELECT _airtable_record_id, entity_interact_id, campaign_interact_id, '
+        f'section, field, response_name, note_body '
+        f'FROM `{BQ_PROJECT}.{BQ_DATASET}.1mc_notes` '
+        f'{where_sql}'
+    )
+    if limit:
+        sql += f' LIMIT {limit}'
+    rows = _query(bq, sql)
+
+    if not rows:
+        logger.info('append_notes: no notes to append')
+        return
+
+    logger.info(f'append_notes: {len(rows)} notes to append')
+    n_ok = n_err = n_skip = 0
+
+    for row in rows:
+        entity_id = str(row['entity_interact_id'])
+        campaign_id = str(row['campaign_interact_id'])
+        section = str(row['section'])
+        field = str(row['field'])
+        response_name = str(row['response_name'])
+        note_body = str(row['note_body'])
+        record_id = str(row['_airtable_record_id'])
+        record_key = f'{record_id}:{response_name}'
+        label = (
+            f'entity={entity_id[:8]}... '
+            f'campaign={campaign_id[:8]}... '
+            f'type={response_name}'
+        )
+
+        if not entity_id or not campaign_id:
+            logger.warning(f'  Skipping {label}: missing id')
+            n_skip += 1
+            continue
+
+        if dry_run:
+            logger.info(f'  [DRY-RUN] Would append note {label}')
+            logger.info(f'    Body: {note_body[:100]}...' if len(note_body) > 100 else f'    Body: {note_body}')
+            n_ok += 1
+            continue
+
+        try:
+            ab.append_note(
+                campaign_id=campaign_id,
+                entity_interact_id=entity_id,
+                section=section,
+                field=field,
+                name=response_name,
+                note_body=note_body,
+            )
+            logger.debug(f'  Appended note {label}')
+            n_ok += 1
+            if sync_logger:
+                sync_logger.log(
+                    operation='append_note',
+                    entity_interact_id=entity_id,
+                    campaign_interact_id=campaign_id,
+                    status='ok',
+                    tag_name=record_key,
+                    value_written=response_name,
+                )
+        except Exception as e:
+            logger.error(f'  ERROR appending note {label}: {e}')
+            n_err += 1
+            if sync_logger:
+                sync_logger.log(
+                    operation='append_note',
+                    entity_interact_id=entity_id,
+                    campaign_interact_id=campaign_id,
+                    status='error',
+                    tag_name=record_key,
+                    error_detail=str(e)[:500],
+                )
+
+        if delay > 0:
+            time.sleep(delay)
+
+    logger.info(f'append_notes: done. ok={n_ok} err={n_err} skipped={n_skip}')
+
+
 OPERATIONS = {
     'update_records': update_records,
     'insert_new_records': insert_new_records,
@@ -1186,6 +1295,7 @@ OPERATIONS = {
     'prepare_email_data': prepare_email_data,
     'prepare_phone_data': prepare_phone_data,
     'apply_assessments': apply_assessments,
+    'append_notes': append_notes,
     'snapshot_tag_state': snapshot_tag_state,
 }
 
@@ -1259,9 +1369,9 @@ def main() -> None:
 
     op_fn = OPERATIONS[args.operation]
     kwargs: Dict[str, Any] = {}
-    if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records'):
+    if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes'):
         kwargs['delay'] = args.delay
-    if args.operation in ('remove_records', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments'):
+    if args.operation in ('remove_records', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes'):
         kwargs['sync_logger'] = sync_logger
     op_fn(bq, ab, campaign_filter, args.dry_run, args.limit, **kwargs)
 

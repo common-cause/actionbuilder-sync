@@ -5,16 +5,21 @@
 --   - Any NewMode submission
 --   - Any ScaleToWin call
 --   - 20+ AN actions in past 6 months
+--   - 1MC Host tag (completed host training)
 --
 -- Level 2 (any one of):
 --   - 2+ ScaleToWin calls
 --   - 2+ digital Mobilize events (is_virtual = TRUE)
 --   - Any in-person Common Cause Mobilize event (organization_id = 6600)
+--   - Hosted a 1MC event (≥1 event_report in Airtable)
+--
+-- Level 3 (any one of):
+--   - 1MC Leader tag (completed leader training)
 --
 -- Write policy (enforced here, not in sync script):
 --   - Only upgrade, never downgrade
 --   - Never overwrite assessments set by human organizers (created_by_id != 3)
---   - Safe to overwrite: no assessment, level=0, or level=1 set by created_by_id=3
+--   - Safe to overwrite: no assessment, level=0, or level 1-2 set by created_by_id=3
 
 WITH all_entity_emails AS (
   SELECT
@@ -99,6 +104,27 @@ stw_by_entity AS (
   GROUP BY aep.entity_id
 ),
 
+-- 1MC: Entities with Host or Leader tags (from current_tag_values)
+mc_roles_by_entity AS (
+  SELECT
+    entity_id,
+    MAX(CASE WHEN tag_name = 'Host' THEN TRUE ELSE FALSE END) as has_host_tag,
+    MAX(CASE WHEN tag_name = 'Leader' THEN TRUE ELSE FALSE END) as has_leader_tag
+  FROM {{ ref('current_tag_values') }}
+  WHERE tag_name IN ('Host', 'Leader')
+  GROUP BY entity_id
+),
+
+-- 1MC: Hosts who have submitted at least one event report
+mc_event_hosts AS (
+  SELECT DISTINCT
+    aee.entity_id
+  FROM all_entity_emails aee
+  INNER JOIN `proj-tmc-mem-com.million_conversations.event_reports` er
+    ON aee.email_normalized = LOWER(TRIM(er.volunteer_email))
+  WHERE er.volunteer_email IS NOT NULL
+),
+
 -- Entities in active campaigns
 entities_in_campaigns AS (
   SELECT
@@ -135,10 +161,14 @@ entity_levels AS (
     eic.campaign_id,
     eic.campaign_interact_id,
 
+    -- Level 3 qualification flags
+    COALESCE(mcr.has_leader_tag, FALSE) as l3_mc_leader,
+
     -- Level 2 qualification flags
     COALESCE(stw.stw_calls, 0) >= 2 as l2_stw_calls,
     COALESCE(mob.digital_mobilize_events_6m, 0) >= 2 as l2_digital_mobilize,
     COALESCE(mob.in_person_cc_events_all_time, 0) >= 1 as l2_in_person_cc,
+    meh.entity_id IS NOT NULL as l2_mc_event_host,
 
     -- Level 1 qualification flags
     COALESCE(mob.mobilize_events_6m, 0) >= 1
@@ -146,6 +176,7 @@ entity_levels AS (
     COALESCE(nmo.newmode_submissions, 0) >= 1 as l1_newmode,
     COALESCE(stw.stw_calls, 0) >= 1 as l1_stw,
     COALESCE(an.an_actions_6m, 0) >= 20 as l1_an_actions,
+    COALESCE(mcr.has_host_tag, FALSE) as l1_mc_host,
 
     -- Current assessment state
     ca.level as current_level,
@@ -156,6 +187,8 @@ entity_levels AS (
   LEFT JOIN an_by_entity an ON an.entity_id = eic.entity_id
   LEFT JOIN newmode_by_entity nmo ON nmo.entity_id = eic.entity_id
   LEFT JOIN stw_by_entity stw ON stw.entity_id = eic.entity_id
+  LEFT JOIN mc_roles_by_entity mcr ON mcr.entity_id = eic.entity_id
+  LEFT JOIN mc_event_hosts meh ON meh.entity_id = eic.entity_id
   LEFT JOIN current_assessments ca
     ON ca.entity_id = eic.entity_id AND ca.campaign_id = eic.campaign_id
 ),
@@ -170,20 +203,24 @@ recommended AS (
 
     -- Recommended level
     CASE
-      WHEN l2_stw_calls OR l2_digital_mobilize OR l2_in_person_cc THEN 2
-      WHEN l1_mobilize OR l1_newmode OR l1_stw OR l1_an_actions THEN 1
+      WHEN l3_mc_leader THEN 3
+      WHEN l2_stw_calls OR l2_digital_mobilize OR l2_in_person_cc OR l2_mc_event_host THEN 2
+      WHEN l1_mobilize OR l1_newmode OR l1_stw OR l1_an_actions OR l1_mc_host THEN 1
       ELSE 0
     END as recommended_level,
 
     -- Qualification reasons (for debugging)
     ARRAY_TO_STRING(ARRAY_CONCAT(
+      IF(l3_mc_leader, ['1MC Leader'], []),
       IF(l2_stw_calls, ['2+ STW calls'], []),
       IF(l2_digital_mobilize, ['2+ digital Mobilize'], []),
       IF(l2_in_person_cc, ['In-person CC event'], []),
+      IF(l2_mc_event_host, ['1MC event host'], []),
       IF(l1_mobilize, ['Mobilize attendance'], []),
       IF(l1_newmode, ['NewMode submission'], []),
       IF(l1_stw, ['STW call'], []),
-      IF(l1_an_actions, ['20+ AN actions'], [])
+      IF(l1_an_actions, ['20+ AN actions'], []),
+      IF(l1_mc_host, ['1MC Host'], [])
     ), ', ') as qualification_reasons
 
   FROM entity_levels
@@ -209,8 +246,8 @@ SELECT
     WHEN r.current_level IS NULL THEN TRUE
     -- Current is 0 — safe to write
     WHEN r.current_level = 0 THEN TRUE
-    -- Current is level 1 set by API user (id=3) — safe to upgrade
-    WHEN r.current_level = 1 AND r.current_created_by_id = 3 THEN TRUE
+    -- Current is level 1 or 2 set by API user (id=3) — safe to upgrade
+    WHEN r.current_level IN (1, 2) AND r.current_created_by_id = 3 THEN TRUE
     -- Current was set by a human organizer — do not touch
     ELSE FALSE
   END as should_write
