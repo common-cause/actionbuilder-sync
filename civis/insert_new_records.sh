@@ -25,3 +25,5 @@ python app/scripts/sync.py insert_new_records --campaign indiana $DELAY
 python app/scripts/sync.py insert_new_records --campaign georgia $DELAY
 python app/scripts/sync.py insert_new_records --campaign rhode_island $DELAY
 python app/scripts/sync.py insert_new_records --campaign hawaii $DELAY
+python app/scripts/sync.py insert_new_records --campaign virginia $DELAY
+python app/scripts/sync.py insert_new_records --campaign dc $DELAY

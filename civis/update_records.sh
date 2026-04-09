@@ -22,4 +22,6 @@ python app/scripts/sync.py update_records --campaign oregon --delay 0.3
 python app/scripts/sync.py update_records --campaign pennsylvania --delay 0.3
 python app/scripts/sync.py update_records --campaign rhode_island --delay 0.3
 python app/scripts/sync.py update_records --campaign texas --delay 0.3
+python app/scripts/sync.py update_records --campaign virginia --delay 0.3
 python app/scripts/sync.py update_records --campaign wisconsin --delay 0.3
+python app/scripts/sync.py update_records --campaign dc --delay 0.3

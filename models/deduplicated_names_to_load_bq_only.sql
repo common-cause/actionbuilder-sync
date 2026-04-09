@@ -63,6 +63,13 @@ WITH state_campaign_map AS (
     ON c.name = s.name
   WHERE c.status = 'active'
     AND c.name != 'Test'
+
+  UNION DISTINCT
+  -- Temporary: VA and DC campaigns created 2026-04-09, not yet replicated to BQ.
+  -- Safe to remove after cln_actionbuilder__campaigns includes ids 24 and 25.
+  SELECT 'DC', '3a227511-fd6f-40f6-abfc-4f2c05ff3b91'
+  UNION DISTINCT
+  SELECT 'VA', '261251df-8836-4f90-a9fb-fdd5dc1798b1'
 ),
 
 -- ============================================================
@@ -359,6 +366,7 @@ SELECT
   mr_event_date
 
 FROM name_phone_deduped
+WHERE first_name IS NOT NULL
 
 GROUP BY
   person_id,
