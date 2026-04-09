@@ -8,12 +8,14 @@ Keeps participation data in [ActionBuilder](https://actionbuilder.org) current b
 
 Reads participation records from Mobilize, Action Network, and ScaleToWin, computes the correct tag values for each activist in ActionBuilder, compares them against what ActionBuilder currently shows, and outputs a table of changes. A custom sync script (provided by The Movement Cooperative) reads that table and makes the ActionBuilder API calls.
 
-**Current state (2026-03-19):**
-- Tag updates — `update_records` now instrumented with sync_log (2026-03-16); not yet run on production schedule pending taggable_logbook fix
+**Current state (2026-03-30):**
+- Nightly maintenance — running on Civis at 10 PM ET: `insert_new_records` → `update_records` → `apply_assessments`. Operational since 2026-03-25.
+- Tag updates — `update_records` running nightly across all 24 state campaigns
+- Assessments — `apply_assessments` sets engagement levels automatically (upgrade-only); see `docs/assessment_rules.md`
 - Deduplication — executed: 154 emails migrated, 91 phones migrated, 8,921 entities removed from campaigns
-- New record insertion — executed: 3,532 entities inserted 2026-03-12
-- Sync log — live: `actionbuilder_sync.sync_log` records API calls for remove_records, insert_new_records, update_records, and cleanup_duplicate_tags
-- AB mirror bug — evidence captured 2026-03-16/17 (`evidence/` dir); AB bug filed with Willy; taggable_logbook stale since 2026-03-05
+- New record insertion — nightly; 3,532 initial entities inserted 2026-03-12, ongoing inserts since
+- Sync log — live: `actionbuilder_sync.sync_log` records all API operations with per-tag granularity
+- AB mirror bug — `taggable_logbook` replication restored ~2026-03-21 (was stalled 3/5–3/20); overlay model remains for hard-delete gap coverage
 
 ---
 
@@ -56,7 +58,7 @@ Should report all checks passing.
 ## Running dbt
 
 ```bash
-# Deploy all 25 views to BigQuery
+# Deploy all 27 models to BigQuery
 bash dbt.sh run
 
 # Deploy a single model
@@ -85,17 +87,23 @@ ActionBuilder Sync/
 │   ├── action_network_6mo_actions.sql     # AN actions filtered to 6 months
 │   ├── mobilize_event_data.sql            # Mobilize attendance aggregated by email
 │   ├── scaletowin_call_data.sql           # ScaleToWin calls aggregated by phone
+│   ├── newmode_actions.sql                # NewMode letter submissions
+│   ├── ofp_attendance.sql                 # Organizing for Power training attendance
 │   ├── state_action_network_top_performers.sql
+│   ├── action_network_national_top_performers.sql
 │   │
 │   │   ── Core sync pipeline ──
 │   ├── correct_participation_values.sql   # "What should be in AB" (computed values)
-│   ├── current_tag_values.sql             # "What is currently in AB" (from taggable_logbook)
+│   ├── current_tag_values.sql             # "What is in AB" (overlay: BQ + sync_log)
+│   ├── current_tag_values_bq_only.sql     # BQ-only version (from taggable_logbook)
 │   ├── updates_needed.sql                 # Sync job input — rows to change
+│   ├── auto_assessment_rules.sql          # Assessment levels to write
+│   ├── hot_prospects.sql                  # High-engagement entities flagged for organizers
 │   │
 │   │   ── Deduplication ──
 │   ├── dedup_candidates.sql               # Sync-log filtered wrapper (used by sync.py)
 │   ├── dedup_candidates_bq_only.sql       # BQ-only version (used by dedup_ambiguous)
-│   ├── dedup_ambiguous.sql                # Ambiguous pairs for human/AI review
+│   ├── dedup_ambiguous.sql                # Ambiguous pairs for human/AI review (TABLE)
 │   ├── dedup_unresolved.sql               # dedup_ambiguous minus resolved pairs
 │   ├── email_migration_needed.sql         # Emails to copy to keeper entities before deletion
 │   ├── phone_migration_needed.sql         # Phones to copy to keeper entities before deletion
@@ -103,29 +111,44 @@ ActionBuilder Sync/
 │   │   ── New record insertion ──
 │   ├── master_load_qualifiers.sql         # People who qualify for AB entry
 │   ├── deduplicated_names_to_load.sql     # Sync-log filtered wrapper (used by sync.py)
-│   └── deduplicated_names_to_load_bq_only.sql  # BQ-only version
+│   ├── deduplicated_names_to_load_bq_only.sql  # BQ-only version
 │   │
 │   │   ── Diagnostics ──
 │   ├── identity_resolution.sql            # Entity → person_id mapping with data-source flags
-│   └── entity_lookup_debug.sql            # Entity names, emails, phones for spot-checking
+│   ├── entity_lookup_debug.sql            # Entity names, emails, phones for spot-checking
+│   ├── test_campaign_updates.sql          # Test campaign pending changes (human-readable)
+│   └── test_campaign_update_summary.sql   # Test campaign change summary dashboard
 │
 ├── civis/                      # Shell scripts for Civis Platform job deployment
-│   ├── cleanup_duplicate_tags.sh
-│   ├── remove_duplicate_entities.sh
-│   └── insert_new_records.sh
+│   ├── insert_new_records.sh        # Nightly: add new entities
+│   ├── update_records.sh            # Nightly: sync tag values
+│   ├── apply_assessments.sh         # Nightly: set assessment levels
+│   ├── snapshot_tag_state.sh        # On-demand: capture tag ground truth from API
+│   ├── cleanup_duplicate_tags.sh    # On-demand: remove duplicate taggings
+│   └── remove_duplicate_entities.sh # One-time: dedup execution
 │
 ├── scripts/                    # Python sync scripts
 │   ├── sync.py                 # Main sync script (all operations)
-│   ├── cleanup_duplicate_tags.py  # Standalone: delete duplicate taggings, instruments sync_log
-│   ├── capture_ab_evidence.py  # One-time: generate AB bug report JSON (mirror staleness)
-│   ├── targeted_evidence.py    # One-time: deletion-check and write-check evidence modes
+│   ├── cleanup_duplicate_tags.py  # Standalone: delete duplicate taggings
+│   ├── capture_ab_evidence.py  # One-time: AB bug report (mirror staleness)
+│   ├── targeted_evidence.py    # One-time: deletion-check and write-check evidence
+│   ├── check_bq_refresh.py     # Utility: check BQ table freshness
+│   ├── check_recent_inserts.py # Utility: verify recent entity insertions
+│   ├── add_tags_to_campaigns.py   # One-time: add tag fields to campaigns
+│   ├── add_ofp_field_to_campaigns.py  # One-time: add OFP training field
 │   └── create_sync_log.sql     # One-time DDL to create sync_log table (already run)
 │
 ├── evidence/                   # Output from evidence scripts (gitignored JSON/TXT reports)
 │
+├── seeds/                      # dbt seed CSVs
+│   ├── state_an_thresholds.csv # Per-state AN action thresholds (MI=5, NE=5, default=20)
+│   └── ofp_training_map.csv    # Mobilize timeslot → OFP training name mapping
+│
 ├── docs/
-│   ├── sync_overview.md        # Detailed sync architecture, field formats, known issues
-│   └── deduplication.md        # Dedup strategy, execution log, edge cases
+│   ├── sync_overview.md        # Sync architecture, field formats, known issues
+│   ├── deduplication.md        # Dedup strategy, execution log, edge cases
+│   ├── assessment_rules.md     # Auto-assessment level criteria and write policy
+│   └── update_records_incident_2026-03-21.md  # Rate limit incident postmortem
 │
 ├── dbt_project.yml             # dbt project config
 ├── profiles.yml                # BigQuery connection config (reads keyfile from env var)
@@ -170,10 +193,8 @@ ActionBuilder DB ──► (actionbuilder_cleaned.*) ──► current_tag_value
 
 ## Key Files Outside This Repo
 
-- **The sync script** — `scripts/sync.py` in this repo; reads dbt views and makes AB API calls. Operations: `update_records`, `insert_new_records`, `remove_records`, `prepare_email_data`, `prepare_phone_data`, `apply_assessments`. All write operations log to `sync_log`.
-- **Duplicate tag cleanup** — `scripts/cleanup_duplicate_tags.py`; standalone script that deletes duplicate taggings via the AB API and logs `delete_tagging` operations to `sync_log`. Also deployed as `civis/cleanup_duplicate_tags.sh`.
-- **Credentials** — stored in `.env` (gitignored). The `BIGQUERY_CREDENTIALS_PASSWORD` env var holds the full service account JSON.
-- **ccef-connections library** — at `../AI Interpretation/ccef-connections`; provides BigQuery, Airtable, Zoom, Sheets, Action Network connectors. Used for any Python scripts that need to query BigQuery directly.
+- **ccef-connections library** — at `../AI Interpretation/ccef-connections` ([GitHub](https://github.com/common-cause/ccef_connections)); provides `BigQueryConnector`, `ActionBuilderConnector`, and other service connectors. All Python scripts in this project use it for BQ and AB API access.
+- **Credentials** — stored in `.env` (gitignored). `BIGQUERY_CREDENTIALS_PASSWORD` (BQ service account JSON) and `ACTION_BUILDER_CREDENTIALS_PASSWORD` (AB API token JSON).
 
 ---
 
@@ -192,21 +213,23 @@ The MCP connects to `proj-tmc-mem-com` using the shared `BIGQUERY_CREDENTIALS_PA
 
 ## Detailed Documentation
 
-- **[docs/sync_overview.md](docs/sync_overview.md)** — ActionBuilder sync format, field list, tag removal, known issues, how to add new fields
-- **[docs/deduplication.md](docs/deduplication.md)** — Deduplication strategy, duplicate counts, root cause analysis, deletion workflow
+- **[docs/sync_overview.md](docs/sync_overview.md)** — Sync architecture, field list, tag removal, known issues, how to add new fields
+- **[docs/deduplication.md](docs/deduplication.md)** — Deduplication strategy, root cause, deletion workflow
+- **[docs/assessment_rules.md](docs/assessment_rules.md)** — Auto-assessment level criteria and write policy
+- **[docs/update_records_incident_2026-03-21.md](docs/update_records_incident_2026-03-21.md)** — Rate limit incident postmortem
 
 ---
 
 ## Roadmap
 
 1. **[Done]** Manage views as code via dbt (replaced BQ GUI)
-2. **[Done]** Tag removal — sync now replaces values rather than accumulating them
-3. **[Done]** `dedup_candidates` — identifies duplicate AB entities across five tiers
-4. **[Done]** `email_migration_needed` / `phone_migration_needed` — contact info consolidated before deletion (154 emails, 91 phones migrated)
-5. **[Done]** `deduplicated_names_to_load` — new-record insertion feed, fully guarded against re-creating existing entities
-6. **[Done]** Dedup execution — 8,921 entities removed from campaigns, 3,532 new entities inserted (2026-03-12)
-7. **[Done]** Sync log architecture — `sync_log` BQ table + dbt wrapper views compensate for BQ replication gaps; sync.py instruments remove_records and insert_new_records
-8. **[Active]** Resolve open `dedup_unresolved` pairs (currently 16 same-campaign ambiguous pairs)
-9. **[Active / AB-blocked]** `taggable_logbook` replication fix — AB's own internal SQL mirror stalled at 2026-03-05 (table too large); bug filed with AB directly (Willy). Evidence captured 2026-03-16/17. `current_tag_values` and `updates_needed` work from stale data until resolved.
-10. **[Pending fix]** Run `update_records` on production schedule — blocked until `taggable_logbook` mirror is fixed; script is ready and instrumented with sync_log.
+2. **[Done]** Tag removal — sync replaces values rather than accumulating them
+3. **[Done]** Dedup execution — 8,921 entities removed, 154 emails + 91 phones migrated, 3,532 new entities inserted
+4. **[Done]** Sync log architecture — `sync_log` BQ table + dbt wrapper views compensate for BQ replication gaps
+5. **[Done]** Auto-assessments — `auto_assessment_rules` + `apply_assessments` operation, upgrade-only write policy
+6. **[Done]** OFP training tags — Organizing for Power attendance synced via Mobilize timeslot mapping
+7. **[Done]** `taggable_logbook` replication — AB fixed their internal mirror (~2026-03-21); overlay model retained for hard-delete gap
+8. **[Done]** Nightly maintenance — Civis runs insert_new_records → update_records → apply_assessments at 10 PM ET
+9. **[Active]** Resolve open `dedup_unresolved` pairs (16 same-campaign ambiguous pairs)
+10. **[Planned]** Slack alerting / replication sentinel — waiting on IT for Slack app + webhook
 11. **[Future]** New data flows: Airtable, Zoom, Mobilize relational organizing campaign

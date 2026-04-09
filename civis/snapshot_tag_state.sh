@@ -22,4 +22,6 @@ python app/scripts/sync.py snapshot_tag_state --campaign oregon --delay 0.3
 python app/scripts/sync.py snapshot_tag_state --campaign pennsylvania --delay 0.3
 python app/scripts/sync.py snapshot_tag_state --campaign rhode_island --delay 0.3
 python app/scripts/sync.py snapshot_tag_state --campaign texas --delay 0.3
+python app/scripts/sync.py snapshot_tag_state --campaign virginia --delay 0.3
 python app/scripts/sync.py snapshot_tag_state --campaign wisconsin --delay 0.3
+python app/scripts/sync.py snapshot_tag_state --campaign dc --delay 0.3

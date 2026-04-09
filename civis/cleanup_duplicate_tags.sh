@@ -22,4 +22,6 @@ python app/scripts/cleanup_duplicate_tags.py --campaign oregon --delay 0.3
 python app/scripts/cleanup_duplicate_tags.py --campaign pennsylvania --delay 0.3
 python app/scripts/cleanup_duplicate_tags.py --campaign rhode_island --delay 0.3
 python app/scripts/cleanup_duplicate_tags.py --campaign texas --delay 0.3
+python app/scripts/cleanup_duplicate_tags.py --campaign virginia --delay 0.3
 python app/scripts/cleanup_duplicate_tags.py --campaign wisconsin --delay 0.3
+python app/scripts/cleanup_duplicate_tags.py --campaign dc --delay 0.3

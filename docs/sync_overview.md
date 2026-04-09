@@ -4,7 +4,7 @@
 
 This project calculates participation values for people in ActionBuilder from external platforms (Mobilize, Action Network, ScaleToWin, EP Archive) and pushes those values into ActionBuilder as tag responses via a custom sync job. It runs entirely in BigQuery as a set of dbt views.
 
-**Current status:** `update_records` fully operational — test campaign synced successfully (Feb 2026). Dedup execution is the next step before Wisconsin campaign full run.
+**Current status (2026-03-30):** Nightly maintenance runs on Civis at 10 PM ET: `insert_new_records` → `update_records` → `apply_assessments` across all 24 state campaigns. Dedup completed March 2026.
 
 ---
 
@@ -15,17 +15,19 @@ The sync job is `scripts/sync.py` in this repository. It replaces the original T
 - **Input:** BigQuery views in `actionbuilder_sync` dataset
 - **Authentication:** `ACTION_BUILDER_CREDENTIALS_PASSWORD` env var — JSON `{"api_token": "...", "subdomain": "..."}`
 - **Rate limit:** AB API is approximately 4 calls/second; no batch endpoint
-- **CLI:** `python scripts/sync.py <operation> [--campaign UUID] [--dry-run] [--limit N]`
+- **CLI:** `python scripts/sync.py <operation> [--campaign NAME_OR_UUID] [--dry-run] [--limit N] [--delay SECONDS]`
 
 ### Operations
 
 | Operation | BQ input view | Purpose |
 |---|---|---|
-| `update_records` | `updates_needed` | Update tag values on existing entities — **operational** |
-| `insert_new_records` | `deduplicated_names_to_load` | Create new entities — built, not yet active |
-| `remove_records` | `dedup_candidates` | Hard-delete duplicate entities via `DELETE /people/{id}` |
-| `prepare_email_data` | `email_migration_needed` | Add secondary emails to keeper entities before dedup deletion |
-| `prepare_phone_data` | `phone_migration_needed` | Add secondary phones to keeper entities before dedup deletion |
+| `update_records` | `updates_needed` | Update tag values on existing entities — **nightly** |
+| `insert_new_records` | `deduplicated_names_to_load` | Create new entities — **nightly** |
+| `apply_assessments` | `auto_assessment_rules` | Set assessment levels (upgrade-only) — **nightly** |
+| `snapshot_tag_state` | (API-driven) | Capture tag ground truth from AB API into sync_log — **on-demand** |
+| `remove_records` | `dedup_candidates` | Remove duplicate entities from campaigns — **one-time, completed** |
+| `prepare_email_data` | `email_migration_needed` | Migrate emails to keeper entities before dedup — **one-time, completed** |
+| `prepare_phone_data` | `phone_migration_needed` | Migrate phones to keeper entities before dedup — **one-time, completed** |
 
 ### Output Table Format (`updates_needed`)
 
@@ -156,7 +158,7 @@ Maps ActionBuilder entities to `person_id`s in the `core_enhanced` hub via prima
 Pre-deletion contact migration feeds. For each duplicate pair in `dedup_candidates`, identifies emails/phones on the entity to be deleted that are not yet on the keeper entity. Must be run (via `prepare_email_data` / `prepare_phone_data`) before executing deletions to ensure participation data is preserved.
 
 #### `master_load_qualifiers` + `deduplicated_names_to_load`
-New record insertion infrastructure. Identifies people from external platforms who qualify to be added to ActionBuilder but don't yet have a record. `deduplicated_names_to_load` applies full AB exclusion and within-feed dedup. **Not currently active** — blocked on dedup execution. As of Feb 2026: 36,044 genuinely new records ready to insert.
+New record insertion infrastructure. Identifies people from external platforms who qualify to be added to ActionBuilder but don't yet have a record. `deduplicated_names_to_load` applies full AB exclusion and within-feed dedup. Runs nightly via `insert_new_records`. Filters out records with NULL first_name (AB API requires it).
 
 #### `test_campaign_updates`
 Filtered view of `updates_needed` for the Test campaign only, with first/last name and primary email joined in for easy human identification. Use to verify what `update_records` will do on the test campaign before running live.
@@ -176,7 +178,10 @@ Aggregated breakdown of pending test campaign updates by field and change type, 
 | Action Network Actions | Participation | Online Actions Past 6 Months | number | Action Network |
 | Action Network State Actions | Participation | Online Actions Past 6 Months | number | State Action Network |
 | Top State Action Taker | Participation | State Online Actions | standard | State Action Network |
+| National Online Actions | Participation | Online Actions Past 6 Months | number | Action Network |
 | Phone Bank Calls Made | Participation | Event Attendance Summary | number | ScaleToWin |
+| Hot Prospect | Participation | Engagement | standard | Computed (multi-source) |
+| Organizing for Power Training | Participation | Training | standard | Mobilize (event 907019) |
 
 ---
 
@@ -185,43 +190,24 @@ Aggregated breakdown of pending test campaign updates by field and change type, 
 ### 1. Tag removal — IMPLEMENTED AND OPERATIONAL ✓
 `current_tag_values` exposes `removal_string = CONCAT(tag_interact_id, ':|:', taggable_logbook_interact_id)`. The `updates_needed` view passes these into `*_tag_remove` columns. The sync script performs a separate DELETE call per tagging (404-tolerant) before writing the new value. Update Value rows include removal IDs; New Value rows have NULL. The sync replaces values rather than accumulating them.
 
-### 2. Duplicate AB entities — SCRIPT OPERATIONAL, EXECUTION READY
+### 2. Duplicate AB entities — EXECUTED ✓
 
-**Scale (Feb 2026, verified against live BQ):**
-- 23,116 total entities; 99.8% matched to a voter-file `person_id`
-- 475 `person_id`s map to 2+ AB entities
-- `dedup_candidates` view identifies **584 entities to delete** across 5 tiers
+**Execution (March 2026):**
+- 154 emails migrated, 91 phones migrated to keeper entities
+- 8,921 entities removed from campaigns
+- 3,532 new entities inserted
+- 16 same-campaign ambiguous pairs remain in `dedup_unresolved` — not yet actioned
 
-**Root cause:** Pipeline run multiple times, each run creates new AB records rather than matching to existing ones. See [docs/deduplication.md](deduplication.md) for full analysis.
+See [docs/deduplication.md](deduplication.md) for full analysis and root cause.
 
-**Current state — all views built, script operational:**
-- `email_migration_needed` — 302 emails to migrate to keeper entities (`prepare_email_data`)
-- `phone_migration_needed` — 183 phones to migrate to keeper entities (`prepare_phone_data`)
-- `dedup_candidates` — 584 entities to delete (`remove_records`)
-- 1 unresolved dedup pair (Catherine Turcer) blocks `deduplicated_names_to_load`
+### 3. New record insertion — OPERATIONAL ✓
 
-**Execution order:**
-1. `email_migration_needed` → sync (`prepare_email_data`)
-2. `phone_migration_needed` → sync (`prepare_phone_data`)
-3. `dedup_candidates` → sync (`remove_records`)
-4. Resolve Catherine Turcer pair → `bash dbt.sh run -s dedup_candidates deduplicated_names_to_load`
-5. `deduplicated_names_to_load` → sync (`insert_new_records`)
-
-**Why `identity_resolution` has `person_id` commented out:**
-Was commented out due to the duplicate problem. Can be restored once dedup is complete.
-
-### 3. New record insertion — BUILT AND GUARDED, NOT YET ACTIVE
-
-`deduplicated_names_to_load` is the insertion feed. As of Feb 2026: **35,926 rows**, all genuinely new.
-
-**Guards in place:**
-- AB exclusion by person_id (covers all identity-hub-linked emails including migrated secondaries)
-- AB exclusion by direct email match
-- AB exclusion by phone (phone-only records)
+`deduplicated_names_to_load` runs nightly via `insert_new_records`. Guards in place:
+- AB exclusion by person_id, direct email, and phone
 - Test account filter (gmail plus-aliases)
-- Within-feed dedup: gmail canonical normalization (Pass A) + name+phone matching (Pass B)
-
-Activation blocked on executing the dedup sequence above first.
+- Within-feed dedup: gmail canonical normalization + name+phone matching
+- Sync_log filter prevents re-inserting entities already logged as inserted
+- `WHERE first_name IS NOT NULL` filter prevents AB API 422 errors on nameless records
 
 ---
 

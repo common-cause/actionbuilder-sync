@@ -24,6 +24,7 @@ CAMPAIGN_ALIASES = {
     'arizona':        'a41cde2c-a06f-4fed-8073-b544ca9aead7',
     'california':     'fd65be58-cce6-400f-97f8-e14adb6558d3',
     'colorado':       'c04eece0-5e68-410d-8436-7b28690d4fe0',
+    'dc':             '3a227511-fd6f-40f6-abfc-4f2c05ff3b91',
     'florida':        'c998a441-0cc0-405e-a3fe-1b4839ec101a',
     'georgia':        'dd6b11e3-d82a-44c5-91bb-ec516c723fd0',
     'hawaii':         '993e08fe-bdeb-460c-832c-71c1b8c19dba',
@@ -43,6 +44,7 @@ CAMPAIGN_ALIASES = {
     'rhode_island':   'd5c48860-3764-4020-9d21-ac6024daefa0',
     'test':           '0e41ca37-e05d-499c-943b-9d08dc8725b0',
     'texas':          'c7cf1a2b-a9e5-43dd-93a9-928d4bc979e4',
+    'virginia':       '261251df-8836-4f90-a9fb-fdd5dc1798b1',
     'wisconsin':      '12951a1f-6d24-4923-ba31-d4aa6c4c3183',
 }
 
