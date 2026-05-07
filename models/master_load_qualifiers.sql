@@ -1,28 +1,90 @@
-WITH ep_qualifiers AS (
-  -- People who completed EP shifts in 2024
+-- Emails of EP volunteers whose source code points to a coalition partner
+-- (LWVMA, MassVOTE, ACLUM, kos, dailykos, LCR, etc.) per ep_archive.source_codes.
+-- Anti-poaching rule: a partner-org code by itself is not enough to make
+-- someone a CC volunteer. EP shift alone, or EP-org Mobilize attendance alone,
+-- does not qualify these emails for AB load.
+WITH external_ep_emails AS (
+  SELECT DISTINCT LOWER(TRIM(fa.email)) AS email_norm
+  FROM ep_archive.full_archive fa
+  INNER JOIN ep_archive.source_codes sc
+    ON LOWER(fa.source_code) = LOWER(sc.source_code)
+  WHERE sc.external = 'Y'
+    AND fa.email IS NOT NULL
+),
+
+-- Emails with any real, non-EP engagement with a CC system in the past 5 years.
+-- "Already-our-volunteer" override on the anti-poaching rule: if someone
+-- partner-org-coded has independently shown up in a CC channel — a Mobilize
+-- event we owned, an AN action, a NewMode submission — they're already in our
+-- relationship, and EP shift adds confirmation rather than serving as the
+-- decisive qualifier.
+-- Election Protection-organized Mobilize events are excluded here: that's EP
+-- activity in a Mobilize wrapper, not "another CC system".
+-- ScaleToWin is keyed by phone, not email, so it isn't represented here;
+-- that's a known small gap.
+cc_engaged_emails AS (
+  SELECT DISTINCT LOWER(TRIM(mp.user__email_address)) AS email_norm
+  FROM mobilize_cleaned.cln_mobilize__participations mp
+  WHERE mp.attended = TRUE
+    AND mp.user__email_address IS NOT NULL
+    AND COALESCE(mp.organization__name, '') != 'Election Protection'
+    AND (DATE(mp.utc_start_date)          >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 YEAR)
+         OR DATE(mp.utc_override_start_date) >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 YEAR))
+
+  UNION DISTINCT
+
+  SELECT DISTINCT LOWER(TRIM(REGEXP_REPLACE(ana.email, r'^"(.*)"$', r'\1'))) AS email_norm
+  FROM {{ ref('action_network_actions') }} ana
+  WHERE ana.email IS NOT NULL
+    AND ana.actions_all_time >= 1
+    AND DATE(ana.latest_action_date) >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 YEAR)
+
+  UNION DISTINCT
+
+  SELECT DISTINCT LOWER(TRIM(nm.contact_email)) AS email_norm
+  FROM newmode_cleaned.cln_newmode__submissions nm
+  WHERE nm.contact_email IS NOT NULL
+    AND nm.testmode IS DISTINCT FROM TRUE
+    AND DATE(nm.utc_created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 YEAR)
+),
+
+ep_qualifiers AS (
+  -- People who completed EP shifts in 2024.
+  -- Partner-org-coded emails (external_ep_emails) are admitted only when they
+  -- also appear in cc_engaged_emails — i.e., already-our-volunteer override.
   SELECT
-    first_name,
-    last_name,
-    phone_number,
-    email,
-    state,
-    county,
-    zip_code,
-    source_code,
-    created_at,
-    shifted_2024,
-    CAST(events_6m AS INT64) as events_6m,
-    CAST(phone_bank_dials AS INT64) as phone_bank_dials,
+    ep.first_name,
+    ep.last_name,
+    ep.phone_number,
+    ep.email,
+    ep.state,
+    ep.county,
+    ep.zip_code,
+    ep.source_code,
+    ep.created_at,
+    ep.shifted_2024,
+    CAST(ep.events_6m AS INT64) as events_6m,
+    CAST(ep.phone_bank_dials AS INT64) as phone_bank_dials,
     'EP Shift 2024' as qualification_reason,
-    LOWER(TRIM(email)) as email_normalized,
-    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(phone_number, ''), r'^\+', ''), r'^1', ''), r'[^\d]', '') as phone_normalized
-  FROM ep_archive.ep_internal
-  WHERE shifted_2024 = 'Y'
-    AND (email IS NOT NULL OR phone_number IS NOT NULL)
+    LOWER(TRIM(ep.email)) as email_normalized,
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(ep.phone_number, ''), r'^\+', ''), r'^1', ''), r'[^\d]', '') as phone_normalized
+  FROM ep_archive.ep_internal ep
+  LEFT JOIN external_ep_emails ext
+    ON LOWER(TRIM(ep.email)) = ext.email_norm
+  LEFT JOIN cc_engaged_emails cce
+    ON LOWER(TRIM(ep.email)) = cce.email_norm
+  WHERE ep.shifted_2024 = 'Y'
+    AND (ep.email IS NOT NULL OR ep.phone_number IS NOT NULL)
+    AND (ext.email_norm IS NULL OR cce.email_norm IS NOT NULL)
 ),
 
 mobilize_qualifiers AS (
-  -- People who attended mobilize events in past year, with contact info from participations
+  -- People who attended mobilize events in past year, with contact info from participations.
+  -- For partner-org-coded EP volunteers, attendance at Election Protection-owned
+  -- events doesn't count as Mobilize qualification — that's EP activity in a
+  -- Mobilize wrapper, not "another CC system". Their attendance at non-EP-org
+  -- events does count, both directly here and as the cc_engaged_emails signal
+  -- that admits them through the EP qualifier.
   SELECT DISTINCT
     mp.user__given_name as first_name,
     mp.user__family_name as last_name,
@@ -40,10 +102,16 @@ mobilize_qualifiers AS (
     LOWER(TRIM(mp.user__email_address)) as email_normalized,
     REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(mp.user__phone_number, ''), r'^\+', ''), r'^1', ''), r'[^\d]', '') as phone_normalized
   FROM mobilize_cleaned.cln_mobilize__participations mp
+  LEFT JOIN external_ep_emails ext
+    ON LOWER(TRIM(mp.user__email_address)) = ext.email_norm
   WHERE mp.attended = True
     AND (mp.utc_start_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 365 DAY)
          OR mp.utc_override_start_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 365 DAY))
     AND mp.user__email_address IS NOT NULL
+    AND NOT (
+      ext.email_norm IS NOT NULL
+      AND mp.organization__name = 'Election Protection'
+    )
 ),
 
 scaletowin_qualifiers AS (

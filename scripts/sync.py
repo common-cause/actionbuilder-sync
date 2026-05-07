@@ -6,6 +6,8 @@ Operations:
     update_records      Update tags on existing AB entities (reads updates_needed)
     insert_new_records  Insert genuinely new entities into AB (reads deduplicated_names_to_load)
     remove_records      Delete duplicate entities (reads dedup_candidates)
+    remove_ep_externals One-shot: remove partner-org EP volunteers loaded via the
+                        old EP-as-decisive-qualifier path (reads ep_external_removal)
     prepare_email_data  Add secondary emails to keeper entities (reads email_migration_needed)
     prepare_phone_data  Add secondary phones to keeper entities (reads phone_migration_needed)
     apply_assessments   Write auto-assessment levels to entities (reads auto_assessment_rules)
@@ -1290,10 +1292,100 @@ def append_notes(
     logger.info(f'append_notes: done. ok={n_ok} err={n_err} skipped={n_skip}')
 
 
+def remove_ep_externals(
+    bq: BigQueryConnector,
+    ab: Optional[ActionBuilderConnector],
+    campaign_filter: Optional[str],
+    dry_run: bool,
+    limit: Optional[int],
+    delay: float = 0.0,
+    sync_logger: Optional[SyncLogger] = None,
+) -> None:
+    """
+    One-shot cleanup: remove entities that were loaded into AB only because
+    EP shift was treated as a decisive qualifier for partner-org-coded volunteers.
+
+    Reads actionbuilder_sync.ep_external_removal and calls delete_person for
+    each delete_interact_id, using the per-row campaign_interact_id. Same
+    delete shape as remove_records, but with operation='remove_ep_external'
+    in sync_log so the two cleanups can be told apart in the audit trail.
+    """
+    logger.info('remove_ep_externals: fetching rows from ep_external_removal...')
+    sql = (
+        f'SELECT delete_interact_id, delete_first_name, delete_last_name, '
+        f'state_abbr, campaign_interact_id, removal_reason '
+        f'FROM `{BQ_PROJECT}.{BQ_DATASET}.ep_external_removal`'
+    )
+    if limit:
+        sql += f' LIMIT {limit}'
+    rows = _query(bq, sql)
+
+    if not rows:
+        logger.info('remove_ep_externals: no rows to process')
+        return
+
+    logger.info(f'remove_ep_externals: {len(rows)} entities to consider')
+    n_ok = n_err = n_skip = 0
+
+    for row in rows:
+        entity_id = str(row['delete_interact_id'])
+        campaign_id = row.get('campaign_interact_id')
+        name = (
+            f"{row.get('delete_first_name', '')} "
+            f"{row.get('delete_last_name', '')}".strip()
+        )
+        state = row.get('state_abbr', '?')
+        label = f'{entity_id[:8]}... ({name!r}, state={state})'
+
+        if not campaign_id:
+            logger.warning(f'  Skipping {label}: entity has no active campaign')
+            n_skip += 1
+            continue
+
+        if campaign_filter and campaign_id != campaign_filter:
+            n_skip += 1
+            continue
+
+        if dry_run:
+            logger.info(f'  [DRY-RUN] Would delete entity {label} (campaign={campaign_id[:8]}...)')
+            n_ok += 1
+            continue
+
+        try:
+            ab.delete_person(campaign_id, entity_id)
+            logger.debug(f'  Deleted {label}')
+            n_ok += 1
+            if sync_logger:
+                sync_logger.log('remove_ep_external', entity_id, campaign_id, 'ok')
+            if delay:
+                time.sleep(delay)
+        except Exception as e:
+            err_str = str(e)
+            if '404' in err_str:
+                logger.debug(f'  Already gone (404) {label}')
+                n_skip += 1
+                if sync_logger:
+                    sync_logger.log('remove_ep_external', entity_id, campaign_id, '404')
+                if delay:
+                    time.sleep(delay)
+            else:
+                logger.error(f'  ERROR deleting {label}: {e}')
+                n_err += 1
+                if sync_logger:
+                    sync_logger.log('remove_ep_external', entity_id, campaign_id,
+                                    'error', error_detail=err_str[:500])
+
+    logger.info(
+        f'remove_ep_externals: done. ok={n_ok} err={n_err} '
+        f'skipped={n_skip} (includes 404-already-gone)'
+    )
+
+
 OPERATIONS = {
     'update_records': update_records,
     'insert_new_records': insert_new_records,
     'remove_records': remove_records,
+    'remove_ep_externals': remove_ep_externals,
     'prepare_email_data': prepare_email_data,
     'prepare_phone_data': prepare_phone_data,
     'apply_assessments': apply_assessments,
@@ -1371,9 +1463,9 @@ def main() -> None:
 
     op_fn = OPERATIONS[args.operation]
     kwargs: Dict[str, Any] = {}
-    if args.operation in ('remove_records', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes'):
+    if args.operation in ('remove_records', 'remove_ep_externals', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes'):
         kwargs['delay'] = args.delay
-    if args.operation in ('remove_records', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes'):
+    if args.operation in ('remove_records', 'remove_ep_externals', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes'):
         kwargs['sync_logger'] = sync_logger
     op_fn(bq, ab, campaign_filter, args.dry_run, args.limit, **kwargs)
 
