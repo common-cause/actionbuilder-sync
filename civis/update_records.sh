@@ -1,5 +1,10 @@
-pip install python-dotenv
-pip install git+https://github.com/common-cause/ccef_connections.git
+#!/usr/bin/env bash
+# Civis entrypoint — AB Tag Updates (nightly workflow step 2).
+# GitHub-backed job: Civis clones this repo into app/, so set the job body to:
+#     bash app/civis/update_records.sh
+# Edit this file (not the Civis UI) to change setup/run steps.
+
+pip install "ccef-connections[bigquery] @ git+https://github.com/common-cause/ccef_connections.git"
 
 python app/scripts/sync.py update_records --campaign arizona --delay 0.3
 python app/scripts/sync.py update_records --campaign california --delay 0.3

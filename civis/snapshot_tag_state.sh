@@ -1,5 +1,11 @@
-pip install python-dotenv
-pip install git+https://github.com/common-cause/ccef_connections.git
+#!/usr/bin/env bash
+# Civis entrypoint — snapshot tag state (on-demand; run before retrying
+# update_records after a failed sync).
+# GitHub-backed job: Civis clones this repo into app/, so set the job body to:
+#     bash app/civis/snapshot_tag_state.sh
+# Edit this file (not the Civis UI) to change setup/run steps.
+
+pip install "ccef-connections[bigquery] @ git+https://github.com/common-cause/ccef_connections.git"
 
 python app/scripts/sync.py snapshot_tag_state --campaign arizona --delay 0.3
 python app/scripts/sync.py snapshot_tag_state --campaign california --delay 0.3

@@ -1,5 +1,11 @@
-pip install python-dotenv
-pip install git+https://github.com/common-cause/ccef_connections.git
+#!/usr/bin/env bash
+# Civis entrypoint — remove duplicate entities (on-demand; completed March 2026,
+# retained for future use).
+# GitHub-backed job: Civis clones this repo into app/, so set the job body to:
+#     bash app/civis/remove_duplicate_entities.sh
+# Edit this file (not the Civis UI) to change setup/run steps.
+
+pip install "ccef-connections[bigquery] @ git+https://github.com/common-cause/ccef_connections.git"
 
 DELAY="--delay 0.3"
 

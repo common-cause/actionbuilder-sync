@@ -1,3 +1,9 @@
+#!/usr/bin/env bash
+# Civis entrypoint — remove EP externals (one-shot cleanup).
+# GitHub-backed job: Civis clones this repo into app/, so set the job body to:
+#     bash app/civis/remove_ep_externals.sh
+# Edit this file (not the Civis UI) to change setup/run steps.
+#
 # One-shot cleanup: remove partner-org EP volunteers loaded into AB only via
 # the old EP-as-decisive-qualifier path (now disallowed by the source_code
 # filter and EP-org Mobilize exclusion in master_load_qualifiers).
@@ -9,8 +15,7 @@
 # to execute. After execution, archive or remove this file — it is not part of
 # the recurring nightly workflow.
 
-pip install python-dotenv
-pip install git+https://github.com/common-cause/ccef_connections.git
+pip install "ccef-connections[bigquery] @ git+https://github.com/common-cause/ccef_connections.git"
 
 DELAY="--delay 0.3"
 
