@@ -15,7 +15,9 @@ bash app/civis/<script>.sh
 The real setup/run steps live in the version-controlled `civis/*.sh` files —
 edit those (and push) to change what runs in Civis; never edit script bodies in
 the Civis UI. Each script pip-installs `ccef-connections[bigquery]` from GitHub
-at run time (`python-dotenv` comes with it as a base dependency).
+at run time, **pinned to a release tag** (currently `@v0.2.0`) so library pushes
+to master never change these jobs — bump the pin in the `.sh` files deliberately
+when upgrading. (`python-dotenv` comes with it as a base dependency.)
 
 ## Workflow
 

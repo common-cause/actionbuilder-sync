@@ -5,7 +5,8 @@
 #     bash app/civis/remove_duplicate_entities.sh
 # Edit this file (not the Civis UI) to change setup/run steps.
 
-pip install "ccef-connections[bigquery] @ git+https://github.com/common-cause/ccef_connections.git"
+# Pinned to a ccef-connections release tag — bump deliberately when upgrading.
+pip install "ccef-connections[bigquery] @ git+https://github.com/common-cause/ccef_connections.git@v0.2.0"
 
 DELAY="--delay 0.3"
 
