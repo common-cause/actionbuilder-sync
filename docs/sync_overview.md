@@ -4,7 +4,7 @@
 
 This project calculates participation values for people in ActionBuilder from external platforms (Mobilize, Action Network, ScaleToWin, EP Archive) and pushes those values into ActionBuilder as tag responses via a custom sync job. It runs entirely in BigQuery as a set of dbt views.
 
-**Current status (2026-03-30):** Nightly maintenance runs on Civis at 10 PM ET: `insert_new_records` → `update_records` → `apply_assessments` across all 24 state campaigns. Dedup completed March 2026.
+**Current status (2026-06-11):** Nightly maintenance runs on Civis at 10 PM ET (workflow #119217): `insert_new_records` → `update_records` → `apply_assessments` → `append_notes` across all 24 state campaigns (22 original + VA + DC). Dedup completed March 2026. Platforms feeding tags: Mobilize, Action Network (incl. state actions), ScaleToWin, NewMode, EP Archive, OFP training. 1 Million Conversations (1MC) role/conversation/notes models are rolling out (see `MEMORY.md` → 1MC roadmap).
 
 ---
 
@@ -24,6 +24,7 @@ The sync job is `scripts/sync.py` in this repository. It replaces the original T
 | `update_records` | `updates_needed` | Update tag values on existing entities — **nightly** |
 | `insert_new_records` | `deduplicated_names_to_load` | Create new entities — **nightly** |
 | `apply_assessments` | `auto_assessment_rules` | Set assessment levels (upgrade-only) — **nightly** |
+| `append_notes` | `1mc_notes` | Append 1MC conversation notes to entities — **nightly** |
 | `snapshot_tag_state` | (API-driven) | Capture tag ground truth from AB API into sync_log — **on-demand** |
 | `remove_records` | `dedup_candidates` | Remove duplicate entities from campaigns — **one-time, completed** |
 | `prepare_email_data` | `email_migration_needed` | Migrate emails to keeper entities before dedup — **one-time, completed** |
@@ -40,10 +41,28 @@ The sync reads from `actionbuilder_sync.updates_needed`. Required structure:
 | `*_tag_remove` | Remove this existing tag value | `tag-interact-id:|:tagging-interact-id` |
 
 **Rules:**
-- Column names before `_tag` / `_tag_remove` are arbitrary — name them for human readability
+- The `_tag` / `_tag_remove` column names are **NOT arbitrary** — they are a closed set. `sync.py` iterates a hardcoded `TAG_COLS` list (and `REMOVE_COLS = [c + '_remove' ...]`), so `update_records` only processes columns in that list. Any `_tag` column `updates_needed` emits that is *not* in `TAG_COLS` is silently ignored. The two must stay in sync. See **"How a tag reaches the column"** below.
 - Multiple rows per entity are fine and equivalent to one row with JSON arrays
 - Multiple values for the same field in one row: use JSON array notation — `["value1","value2"]`
 - Blank values after the last `:|:` in a `_tag` column will cause errors — never send an empty value
+
+#### How a tag reaches the column (`field_group` → output column → `TAG_COLS`)
+
+This is the part most easily misread from the SQL. In `updates_needed`, each field's `updates_to_apply` row carries a `field_group` string. The final SELECT uses `field_group` in `CASE` expressions to route that row's `sync_string` into exactly **one** named output column (and the removal IDs into its `*_remove` partner). The output column — not the field name — is what `sync.py` reads.
+
+`TAG_COLS` in `scripts/sync.py` (the live set as of 2026-06):
+
+```
+event_participation_history_tag      online_actions_past_6_months_tag    ofp_tag
+event_participation_summary_tag      state_online_actions_tag
+national_online_actions_tag          engagement_tag
+```
+
+Consequences when adding a tag:
+- **Reuse an existing column** (give your row a `field_group` that maps to one already in `TAG_COLS`) → **no `sync.py` change needed.** This is the **NewMode precedent**: "NewMode Actions" uses `field_group = 'Online Actions Past 6 Months'` and rides the existing `online_actions_past_6_months_tag` column. The actual AB tag taxonomy is set by the sync string, not the column name, so reuse is clean.
+- **New column** → you must add it to **both** the `updates_needed` final SELECT (a new `field_group` → `_tag`/`_tag_remove` CASE pair) **and** `TAG_COLS` in `sync.py`.
+- The columns differ in removal behavior: most do add-with-removal (update replaces value); the `ofp_tag` and the 1MC columns are additive-only (removal always NULL). Pick a column whose behavior matches your tag.
+- ⚠️ The 1MC `million_conversations_*_tag` columns are emitted by `updates_needed` but are **not yet in `TAG_COLS`** — they are staged ahead of the `sync.py` wiring (1MC rollout in progress). They are not written by `update_records` today.
 
 ### Sync String Format
 
@@ -170,18 +189,26 @@ Aggregated breakdown of pending test campaign updates by field and change type, 
 
 ## Currently Synced Fields
 
-| Field Name | Section | Category | Type | Source |
+Section is `Participation` for every field except Hot Prospect (`Engagement`). The last column is the `TAG_COLS` output column in `updates_needed` / `sync.py` (see "How a tag reaches the column").
+
+| Field Name (AB field) | Category (field_group) | Type | Source model | → TAG_COLS column |
 |---|---|---|---|---|
-| Events Attended Past 6 Months | Participation | Event Attendance Summary | number | Mobilize |
-| Most Recent Event Attended | Participation | Event Attendance History | date | Mobilize |
-| First Event Attended | Participation | Event Attendance History | date | Mobilize |
-| Action Network Actions | Participation | Online Actions Past 6 Months | number | Action Network |
-| Action Network State Actions | Participation | Online Actions Past 6 Months | number | State Action Network |
-| Top State Action Taker | Participation | State Online Actions | standard | State Action Network |
-| National Online Actions | Participation | Online Actions Past 6 Months | number | Action Network |
-| Phone Bank Calls Made | Participation | Event Attendance Summary | number | ScaleToWin |
-| Hot Prospect | Participation | Engagement | standard | Computed (multi-source) |
-| Organizing for Power Training | Participation | Training | standard | Mobilize (event 907019) |
+| Events Attended Past 6 Months | Event Attendance Summary | number | `mobilize_event_data` | `event_participation_summary_tag` |
+| Phone Bank Calls Made | Event Attendance Summary | number | `scaletowin_call_data` | `event_participation_summary_tag` |
+| Most Recent Event Attended | Event Attendance History | date | `mobilize_event_data` | `event_participation_history_tag` |
+| First Event Attended | Event Attendance History | date | `mobilize_event_data` | `event_participation_history_tag` |
+| Action Network Actions | Online Actions Past 6 Months | number | `action_network_6mo_actions` | `online_actions_past_6_months_tag` |
+| Action Network State Actions | Online Actions Past 6 Months | number | `state_action_network_top_performers` | `online_actions_past_6_months_tag` |
+| NewMode Actions | Online Actions Past 6 Months | number | `newmode_actions` | `online_actions_past_6_months_tag` |
+| Top State Action Taker | State Online Actions | standard | `state_action_network_top_performers` | `state_online_actions_tag` |
+| Top National Action Network Activist | National Online Actions | standard | `action_network_national_top_performers` | `national_online_actions_tag` |
+| Hot Prospect *(Section: Engagement / Cat: Prospect Identification)* | — | standard | `hot_prospects` (Mobilize+AN+STW+NewMode activity) | `engagement_tag` |
+| OFP competencies: Organizing Basics, **Storytelling**, Relational Organizing, Rapid Response Basics | Organizing for Power | standard (additive multi-select) | `ofp_attendance` (Mobilize event 907019) | `ofp_tag` |
+
+**Notes:**
+- **`current_tag_values` is an overlay model:** it merges `sync_log` tag operations on top of the (sometimes stale) BQ snapshot of `taggable_logbook`, so the "what is currently in AB" side reflects recent sync runs and covers the hard-delete replication gap. A `_bq_only` twin preserves the original snapshot-only logic. See `CLAUDE.md` → "Sync Log Architecture".
+- **Name-collision warning:** "**Storytelling**" already exists as an OFP training competency tag (above). A Soapboxx storytelling tag must use a distinct name (e.g. "Soapboxx Stories").
+- **1MC (in progress):** `updates_needed` also emits `million_conversations_*` columns (roles, total conversations, prospects) from the `1mc_*` models, and `append_notes` writes 1MC notes from `1mc_notes`. The tag columns are not yet in `sync.py` `TAG_COLS` (rollout pending).
 
 ---
 
@@ -227,19 +254,41 @@ See [docs/deduplication.md](deduplication.md) for full analysis and root cause.
 
 ---
 
-## Adding a New Sync Field
+## Incorporating a New Participation Platform
 
-To add a new participation field to the sync:
+This is the canonical recipe for wiring a new activist platform (Mobilize, AN, ScaleToWin, NewMode, Soapboxx, …) into the sync. A platform is incorporated across **three surfaces**, mirroring how the existing ones work:
 
-1. **Add the source data** — create or extend a staging view with the raw data
-2. **Add to `correct_participation_values`** — join in the new data, format the value, build the sync string using the pattern `Section:|:Category:|:Field:|:response_type:value`
-3. **Add to `current_tag_values`** — add the tag name to the `WHERE tag_name IN (...)` filter and add a CASE branch in `sync_field_identifier`
-4. **Add to `updates_needed`**:
-   - Add the correct/current value columns to `value_comparisons`
-   - Add the `*_needs_update` boolean
-   - Add a `UNION ALL` branch in `updates_to_apply`
-   - Add `*_tag` and `*_tag_remove` CASE branches in the final SELECT
-5. **Run `bash dbt.sh run`** to deploy
+1. **Record involvement** — its activity becomes an AB participation tag (the steps below).
+2. **Push criterion** — its activity qualifies people to be *loaded* into AB (`master_load_qualifiers`).
+3. **Hot prospects** — its activity counts toward the prospect ranking (`hot_prospects`).
+
+You usually want all three. They are independent edits, so build and validate each in isolation.
+
+### Prerequisites
+- **The AB tag field must already exist in the AB UI** and be added to the campaign before the API can write it. The Person Signup Helper matches `section` + `field` + `name` to existing tags (unless `action_builder:create_tag` is set — which this sync does not use). Create the section/field in the UI first. (See `docs/actionbuilder_person_signup.md`; and `MEMORY.md` → `ab_notes_field_type` for the notes-field gotcha.)
+- **Identity keys:** the platform's per-person data must carry email and/or phone — that's how it joins to AB entities (`cln_actionbuilder__emails`/`_phones`) and to the `core_enhanced` person hub. Confirm fill rates before building.
+- **Pick a distinct tag name** — check the "Currently Synced Fields" table for collisions (e.g. "Storytelling" is taken by OFP).
+
+### Surface 1 — Record involvement (the tag)
+1. **Source model** — create a staging model that dedups the platform's cleaned BQ table to one row per person (per email), e.g. `soapboxx_stories.sql` modeled on `action_network_6mo_actions.sql` / `newmode_actions.sql`. Emit the metric value(s) and the `Section:|:Category:|:Field:|:response_type:value` sync string(s).
+2. **`correct_participation_values`** — join the new data in (via the entity's emails/phones), format the value, expose the value + sync-string columns; include it in `has_participation_data`.
+3. **`current_tag_values`** (and `_bq_only`) — add the new tag name(s) to the `tag_name IN (...)` read list so current AB values are diffed and old values can be removed.
+4. **`updates_needed`** — add the tag to the current-values pivot, `value_comparisons`, the `*_needs_update` boolean, a `UNION ALL` branch in `updates_to_apply`, and route it via a `field_group`:
+   - **Reuse an existing `TAG_COLS` column** by choosing a matching `field_group` (no `sync.py` change — the NewMode pattern), **or**
+   - **Add a new column** to the final SELECT *and* to `TAG_COLS` in `scripts/sync.py`.
+   See "How a tag reaches the column" above. The actual AB taxonomy is set by the sync string, so reusing a column does not constrain the tag's real section/field.
+5. *(Optional — tag on first insert)* — to stamp the value when a brand-new entity is created (not just on later updates), add a value column to `deduplicated_names_to_load` and an entry to `INSERT_TAG_FIELDS` in `sync.py`.
+
+### Surface 2 — Push criterion (`master_load_qualifiers`)
+- Add a `<platform>_qualifiers` CTE (one row per qualifying person with name/email/phone/created_at and a `qualification_reason` literal), add it to the `all_qualifiers` UNION, and — if the activity is genuine CC engagement — add it to `cc_engaged_emails` (the anti-poaching override). Choose the threshold: high-effort actions qualify at ≥1 (Mobilize/NewMode); high-volume online actions use a per-state threshold (AN). Downstream `deduplicated_names_to_load` then handles dedup/exclusion automatically.
+
+### Surface 3 — Hot prospects (`hot_prospects`)
+- Add a `<platform>_activity` CTE (count per entity via the entity-email join), LEFT JOIN it in `entity_activity`, add it to `total_activity_score` (flat 1-per-action keeps the score comparable across platforms), and add an output column.
+
+### Deploy & verify
+- `bash dbt.sh run -s <new_model>+` to build the model and its downstream dependents.
+- Spot-check counts in BigQuery; use `test_campaign_updates` / `test_campaign_update_summary` to preview what `update_records` will write before a live run.
+- Dry-run the sync: `python scripts/sync.py update_records --campaign <test-uuid> --dry-run`.
 
 ## Adding a New Sync Job (new campaign / different fields)
 
