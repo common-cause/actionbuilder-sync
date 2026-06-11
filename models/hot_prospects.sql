@@ -114,6 +114,17 @@ newmode_activity AS (
   GROUP BY aee.entity_id
 ),
 
+soapboxx_activity AS (
+  -- Soapboxx storytelling totals (all-time, like STW; any story counts)
+  SELECT
+    aee.entity_id,
+    SUM(sbx.soapboxx_stories) as soapboxx_stories
+  FROM all_entity_emails aee
+  INNER JOIN {{ ref('soapboxx_stories') }} sbx
+    ON aee.email_normalized = sbx.email_normalized
+  GROUP BY aee.entity_id
+),
+
 entity_activity AS (
   SELECT
     ec.entity_id,
@@ -123,15 +134,18 @@ entity_activity AS (
     COALESCE(an.an_actions_6mo, 0) as an_actions_6mo,
     COALESCE(stw.stw_calls, 0) as stw_calls,
     COALESCE(nm.newmode_count, 0) as newmode_count,
+    COALESCE(sbx.soapboxx_stories, 0) as soapboxx_stories,
     COALESCE(mob.mobilize_events_6mo, 0)
       + COALESCE(an.an_actions_6mo, 0)
       + COALESCE(stw.stw_calls, 0)
-      + COALESCE(nm.newmode_count, 0) as total_activity_score
+      + COALESCE(nm.newmode_count, 0)
+      + COALESCE(sbx.soapboxx_stories, 0) as total_activity_score
   FROM ab_entities_in_active_campaigns ec
   LEFT JOIN mobilize_activity mob ON ec.entity_id = mob.entity_id
   LEFT JOIN an_activity an ON ec.entity_id = an.entity_id
   LEFT JOIN stw_activity stw ON ec.entity_id = stw.entity_id
   LEFT JOIN newmode_activity nm ON ec.entity_id = nm.entity_id
+  LEFT JOIN soapboxx_activity sbx ON ec.entity_id = sbx.entity_id
 ),
 
 qualified_entities AS (
@@ -163,6 +177,7 @@ SELECT
   an_actions_6mo,
   stw_calls,
   newmode_count,
+  soapboxx_stories,
   total_activity_score,
   prospect_rank,
   'Hot Prospect' as hot_prospect_value,

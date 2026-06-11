@@ -98,28 +98,34 @@ REMOVE_COLS = [c + '_remove' for c in TAG_COLS]
 # ---------------------------------------------------------------------------
 # Tag field mapping for insert_new_records
 #
-# Maps value column name in deduplicated_names_to_load
-# -> (section, field, response_type)
+# Maps a value column in deduplicated_names_to_load
+# -> (action_builder:section, action_builder:field, name, response_type)
 #
-# The *_field columns in that view are plain strings like "Action Network
-# Actions", not sync strings. We build add_tags directly from the numeric /
-# date value columns using this mapping.
+# action_builder:field must be a real AB *field* (the tag category, e.g.
+# "Online Actions Past 6 Months") and `name` is the data-point/response (e.g.
+# "Action Network Actions"). This mirrors the structure parse_sync_string emits
+# for update_records. Putting the data-point name in the field position makes AB
+# silently drop the tag ("Invalid fields are ignored"), so the value never lands
+# on insert.
 # ---------------------------------------------------------------------------
-INSERT_TAG_FIELDS: Dict[str, Tuple[str, str, str]] = {
+INSERT_TAG_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
     'action_network_actions': (
-        'Participation', 'Action Network Actions', 'number_response',
+        'Participation', 'Online Actions Past 6 Months', 'Action Network Actions', 'number_response',
     ),
     'events_6m': (
-        'Participation', 'Events Attended Past 6 Months', 'number_response',
+        'Participation', 'Event Attendance Summary', 'Events Attended Past 6 Months', 'number_response',
     ),
     'phone_bank_dials': (
-        'Participation', 'Phone Bank Calls Made', 'number_response',
+        'Participation', 'Event Attendance Summary', 'Phone Bank Calls Made', 'number_response',
     ),
     'first_event_date': (
-        'Participation', 'First Event Attended', 'date_response',
+        'Participation', 'Event Attendance History', 'First Event Attended', 'date_response',
     ),
     'mr_event_date': (
-        'Participation', 'Most Recent Event Attended', 'date_response',
+        'Participation', 'Event Attendance History', 'Most Recent Event Attended', 'date_response',
+    ),
+    'soapboxx_stories': (
+        'Participation', 'Storytelling', 'Soapboxx Stories', 'number_response',
     ),
 }
 
@@ -345,9 +351,14 @@ def parse_removal_string(s: str) -> Tuple[str, str]:
     return parts[0], parts[1]
 
 
-def _build_insert_tag(col: str, value: Any) -> Optional[Dict[str, str]]:
+def _build_insert_tag(col: str, value: Any) -> Optional[Dict[str, Any]]:
     """
     Build a tag dict for an insert_new_records field from a column value.
+
+    Emits the same shape parse_sync_string produces for update_records:
+    action_builder:section + action_builder:field (the AB field/category) +
+    name (the data-point) + the typed response. Putting the data-point in the
+    field position makes AB ignore the tag, so the value never lands on insert.
 
     Returns None if the value is falsy (0, None, empty string).
     """
@@ -356,13 +367,20 @@ def _build_insert_tag(col: str, value: Any) -> Optional[Dict[str, str]]:
     mapping = INSERT_TAG_FIELDS.get(col)
     if not mapping:
         return None
-    section, field, _ = mapping
-    str_value = str(value) if not isinstance(value, date) else str(value)
-    return {
+    section, field, name, response_type = mapping
+    tag: Dict[str, Any] = {
         'action_builder:section': section,
         'action_builder:field': field,
-        'name': str_value,
+        'name': name,
     }
+    if response_type == 'number_response':
+        try:
+            tag['action_builder:number_response'] = int(value)
+        except (ValueError, TypeError):
+            tag['action_builder:number_response'] = float(value)
+    elif response_type == 'date_response':
+        tag['action_builder:date_response'] = str(value)
+    return tag
 
 
 def _extract_tag_info(tag: Dict[str, Any]) -> Tuple[str, str]:

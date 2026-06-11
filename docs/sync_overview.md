@@ -200,6 +200,7 @@ Section is `Participation` for every field except Hot Prospect (`Engagement`). T
 | Action Network Actions | Online Actions Past 6 Months | number | `action_network_6mo_actions` | `online_actions_past_6_months_tag` |
 | Action Network State Actions | Online Actions Past 6 Months | number | `state_action_network_top_performers` | `online_actions_past_6_months_tag` |
 | NewMode Actions | Online Actions Past 6 Months | number | `newmode_actions` | `online_actions_past_6_months_tag` |
+| Soapboxx Stories | Storytelling *(AB category; routed via the Online Actions column — NewMode-style reuse)* | number | `soapboxx_stories` | `online_actions_past_6_months_tag` |
 | Top State Action Taker | State Online Actions | standard | `state_action_network_top_performers` | `state_online_actions_tag` |
 | Top National Action Network Activist | National Online Actions | standard | `action_network_national_top_performers` | `national_online_actions_tag` |
 | Hot Prospect *(Section: Engagement / Cat: Prospect Identification)* | — | standard | `hot_prospects` (Mobilize+AN+STW+NewMode activity) | `engagement_tag` |
@@ -277,7 +278,7 @@ You usually want all three. They are independent edits, so build and validate ea
    - **Reuse an existing `TAG_COLS` column** by choosing a matching `field_group` (no `sync.py` change — the NewMode pattern), **or**
    - **Add a new column** to the final SELECT *and* to `TAG_COLS` in `scripts/sync.py`.
    See "How a tag reaches the column" above. The actual AB taxonomy is set by the sync string, so reusing a column does not constrain the tag's real section/field.
-5. *(Optional — tag on first insert)* — to stamp the value when a brand-new entity is created (not just on later updates), add a value column to `deduplicated_names_to_load` and an entry to `INSERT_TAG_FIELDS` in `sync.py`.
+5. *(Tag on first insert)* — to stamp the value when a brand-new entity is created (not just on the next `update_records` pass), thread the value column through `master_load_qualifiers` → `deduplicated_names_to_load(_bq_only)` and add an `INSERT_TAG_FIELDS` entry in `sync.py`. The entry is `(action_builder:section, action_builder:field, name, response_type)` where **`field` is the AB field/category** (e.g. `Storytelling`) and **`name` is the data-point** (e.g. `Soapboxx Stories`) — same structure `parse_sync_string` emits. ⚠️ Putting the data-point in the `field` position makes AB silently drop the tag ("Invalid fields are ignored"); this was a latent no-op for all platforms until repaired 2026-06-11.
 
 ### Surface 2 — Push criterion (`master_load_qualifiers`)
 - Add a `<platform>_qualifiers` CTE (one row per qualifying person with name/email/phone/created_at and a `qualification_reason` literal), add it to the `all_qualifiers` UNION, and — if the activity is genuine CC engagement — add it to `cc_engaged_emails` (the anti-poaching override). Choose the threshold: high-effort actions qualify at ≥1 (Mobilize/NewMode); high-volume online actions use a per-state threshold (AN). Downstream `deduplicated_names_to_load` then handles dedup/exclusion automatically.

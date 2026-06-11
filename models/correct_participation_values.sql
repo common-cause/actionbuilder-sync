@@ -138,6 +138,17 @@ newmode_by_entity AS (
   GROUP BY aee.entity_id
 ),
 
+soapboxx_by_entity AS (
+  -- Aggregate Soapboxx storytelling submissions across all email addresses for each entity
+  SELECT
+    aee.entity_id,
+    SUM(sbx.soapboxx_stories) as total_soapboxx_stories
+  FROM all_entity_emails aee
+  INNER JOIN {{ ref('soapboxx_stories') }} sbx
+    ON aee.email_normalized = sbx.email_normalized
+  GROUP BY aee.entity_id
+),
+
 national_top_performers_by_entity AS (
   -- Flag entities whose email appears in the national top 50 AN action takers
   SELECT
@@ -177,6 +188,9 @@ combined_external_data AS (
     -- NewMode submissions
     COALESCE(nbe.total_newmode_submissions, 0) as newmode_actions,
 
+    -- Soapboxx storytelling submissions
+    COALESCE(sbe.total_soapboxx_stories, 0) as soapboxx_stories,
+
     -- National top performer flag
     CASE WHEN ntpbe.top_national_action_taker = 1 THEN TRUE ELSE FALSE END as top_national_action_taker,
 
@@ -186,6 +200,7 @@ combined_external_data AS (
     CASE WHEN sabe.entity_id IS NOT NULL THEN TRUE ELSE FALSE END as has_state_action_network,
     CASE WHEN stw.entity_id IS NOT NULL THEN TRUE ELSE FALSE END as has_scaletowin_calls,
     CASE WHEN nbe.entity_id IS NOT NULL THEN TRUE ELSE FALSE END as has_newmode_actions,
+    CASE WHEN sbe.entity_id IS NOT NULL THEN TRUE ELSE FALSE END as has_soapboxx,
     CASE WHEN ntpbe.entity_id IS NOT NULL AND ntpbe.top_national_action_taker = 1 THEN TRUE ELSE FALSE END as has_national_top_performer
 
   FROM actionbuilder_entities_with_contacts ab
@@ -199,6 +214,8 @@ combined_external_data AS (
     ON ab.entity_id = stw.entity_id
   LEFT JOIN newmode_by_entity nbe
     ON ab.entity_id = nbe.entity_id
+  LEFT JOIN soapboxx_by_entity sbe
+    ON ab.entity_id = sbe.entity_id
   LEFT JOIN national_top_performers_by_entity ntpbe
     ON ab.entity_id = ntpbe.entity_id
 ),
@@ -222,6 +239,7 @@ formatted_values AS (
     top_state_action_taker,
     phone_bank_calls_made,
     newmode_actions,
+    soapboxx_stories,
     top_national_action_taker,
 
     -- Formatted values for sync
@@ -250,6 +268,8 @@ formatted_values AS (
 
     CAST(newmode_actions AS STRING) as newmode_actions_value,
 
+    CAST(soapboxx_stories AS STRING) as soapboxx_stories_value,
+
     -- National top performer as standard tag (only for top 50, NULL otherwise)
     CASE WHEN top_national_action_taker = TRUE THEN 'Top National Action Network Activist' ELSE NULL END as top_national_action_taker_value,
 
@@ -259,6 +279,7 @@ formatted_values AS (
     has_state_action_network,
     has_scaletowin_calls,
     has_newmode_actions,
+    has_soapboxx,
     has_national_top_performer,
 
     -- Overall data completeness
@@ -266,7 +287,7 @@ formatted_values AS (
       WHEN events_attended_past_6_months > 0 OR most_recent_event_attended IS NOT NULL
            OR first_event_attended IS NOT NULL OR action_network_actions_6mo > 0
            OR state_actions_6_months > 0 OR phone_bank_calls_made > 0
-           OR newmode_actions > 0
+           OR newmode_actions > 0 OR soapboxx_stories > 0
       THEN TRUE
       ELSE FALSE
     END as has_participation_data
@@ -292,6 +313,7 @@ SELECT
   top_state_action_taker,
   phone_bank_calls_made,
   newmode_actions,
+  soapboxx_stories,
   top_national_action_taker,
 
   -- Formatted values for sync
@@ -303,6 +325,7 @@ SELECT
   top_state_action_taker_value,
   phone_bank_calls_made_value,
   newmode_actions_value,
+  soapboxx_stories_value,
   top_national_action_taker_value,
 
   -- Sync field mappings with embedded values and response types
@@ -318,6 +341,7 @@ SELECT
   END as top_state_action_taker_sync_string,
   CONCAT('Participation:|:Event Attendance Summary:|:Phone Bank Calls Made:|:number_response:', phone_bank_calls_made_value) as phone_calls_sync_string,
   CONCAT('Participation:|:Online Actions Past 6 Months:|:NewMode Actions:|:number_response:', newmode_actions_value) as newmode_actions_sync_string,
+  CONCAT('Participation:|:Storytelling:|:Soapboxx Stories:|:number_response:', soapboxx_stories_value) as soapboxx_sync_string,
   CASE
     WHEN top_national_action_taker_value IS NOT NULL
     THEN CONCAT('Participation:|:National Online Actions:|:Top National Action Network Activist:|:standard_response:', top_national_action_taker_value)
@@ -330,6 +354,7 @@ SELECT
   has_state_action_network,
   has_scaletowin_calls,
   has_newmode_actions,
+  has_soapboxx,
   has_national_top_performer,
   has_participation_data,
 

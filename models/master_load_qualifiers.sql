@@ -46,6 +46,14 @@ cc_engaged_emails AS (
   WHERE nm.contact_email IS NOT NULL
     AND nm.testmode IS DISTINCT FROM TRUE
     AND DATE(nm.utc_created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 YEAR)
+
+  UNION DISTINCT
+
+  -- Soapboxx is a recent platform (all data within the 5-year window); any story
+  -- is genuine CC engagement, so it counts toward the already-our-volunteer override.
+  SELECT DISTINCT sbx.email_normalized AS email_norm
+  FROM {{ ref('soapboxx_stories') }} sbx
+  WHERE sbx.email_normalized IS NOT NULL
 ),
 
 ep_qualifiers AS (
@@ -189,6 +197,30 @@ newmode_qualifiers AS (
     AND nm.testmode IS DISTINCT FROM TRUE
 ),
 
+soapboxx_qualifiers AS (
+  -- People who submitted any Soapboxx story (1 submission = qualifies, like
+  -- NewMode/Mobilize). High-effort signal: a recorded video/photo/written testimonial.
+  SELECT DISTINCT
+    sbx.first_name as first_name,
+    sbx.last_name as last_name,
+    sbx.phone as phone_number,
+    sbx.email_normalized as email,
+    CAST(NULL AS STRING) as state,
+    CAST(NULL AS STRING) as county,
+    sbx.zip_code as zip_code,
+    CAST(NULL AS STRING) as source_code,
+    CAST(NULL AS TIMESTAMP) as created_at,
+    CAST(NULL AS STRING) as shifted_2024,
+    CAST(NULL AS INT64) as events_6m,
+    CAST(NULL AS INT64) as phone_bank_dials,
+    'Soapboxx Story' as qualification_reason,
+    sbx.email_normalized as email_normalized,
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(sbx.phone, ''), r'^\+', ''), r'^1', ''), r'[^\d]', '') as phone_normalized
+  FROM {{ ref('soapboxx_stories') }} sbx
+  WHERE sbx.soapboxx_stories > 0
+    AND sbx.email_normalized IS NOT NULL
+),
+
 all_qualifiers AS (
   -- Combine all qualification sources
   SELECT * FROM ep_qualifiers
@@ -200,6 +232,8 @@ all_qualifiers AS (
   SELECT * FROM action_network_qualifiers
   UNION ALL
   SELECT * FROM newmode_qualifiers
+  UNION ALL
+  SELECT * FROM soapboxx_qualifiers
 ),
 
 qualifiers_with_person_ids AS (
@@ -343,13 +377,18 @@ final_with_action_network AS (
     uc.qualification_count,
 
     -- Get Action Network actions count via person_id
-    COALESCE(SUM(an6.total_actions_6_months), 0) as action_network_actions
+    COALESCE(SUM(an6.total_actions_6_months), 0) as action_network_actions,
+
+    -- Get Soapboxx story count via person_id
+    COALESCE(SUM(sbx.soapboxx_stories), 0) as soapboxx_stories
 
   FROM person_unified_contacts uc
   LEFT JOIN core_enhanced.enh_activistpools__emails epe
     ON uc.person_id = epe.person_id
   LEFT JOIN {{ ref('action_network_6mo_actions') }} an6
     ON LOWER(TRIM(epe.email)) = an6.email_normalized
+  LEFT JOIN {{ ref('soapboxx_stories') }} sbx
+    ON LOWER(TRIM(epe.email)) = sbx.email_normalized
   GROUP BY uc.person_id, uc.first_name, uc.last_name, uc.phone_number, uc.email,
            uc.state, uc.county, uc.zip_code, uc.source_code, uc.created_at,
            uc.shifted_2024, uc.events_6m, uc.phone_bank_dials, uc.qualification_reasons, uc.qualification_count
@@ -375,11 +414,16 @@ final_with_action_network AS (
     um.qualification_count,
 
     -- Get Action Network actions directly for unmatched
-    COALESCE(an6.total_actions_6_months, 0) as action_network_actions
+    COALESCE(an6.total_actions_6_months, 0) as action_network_actions,
+
+    -- Get Soapboxx story count directly for unmatched
+    COALESCE(sbx.soapboxx_stories, 0) as soapboxx_stories
 
   FROM unmatched_contacts um
   LEFT JOIN {{ ref('action_network_6mo_actions') }} an6
     ON LOWER(TRIM(um.email)) = an6.email_normalized
+  LEFT JOIN {{ ref('soapboxx_stories') }} sbx
+    ON LOWER(TRIM(um.email)) = sbx.email_normalized
 ),
 
 final_with_voter_file_fallback AS (
@@ -426,7 +470,8 @@ final_with_voter_file_fallback AS (
     fan.phone_bank_dials,
     fan.qualification_reasons,
     fan.qualification_count,
-    fan.action_network_actions
+    fan.action_network_actions,
+    fan.soapboxx_stories
 
   FROM final_with_action_network fan
   LEFT JOIN core_targetsmart_enhanced.enh_activistpools__identities ident
@@ -450,6 +495,7 @@ SELECT DISTINCT
   events_6m,
   phone_bank_dials,
   action_network_actions,
+  soapboxx_stories,
 
   -- Add field name columns for upload interface
   'Action Network Actions' as action_network_field,

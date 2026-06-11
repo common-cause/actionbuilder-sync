@@ -163,6 +163,7 @@ base_qualified AS (
     mlq.events_6m,
     mlq.phone_bank_dials,
     mlq.action_network_actions,
+    mlq.soapboxx_stories,
     mlq.action_network_field,
     mlq.events_field,
     mlq.pb_field,
@@ -356,6 +357,7 @@ SELECT
   events_6m,
   phone_bank_dials,
   MAX(action_network_actions)    AS action_network_actions,
+  MAX(soapboxx_stories)          AS soapboxx_stories,
 
   action_network_field,
   events_field,

@@ -11,6 +11,7 @@ WITH correct_values AS (
     phone_bank_calls_made,
     newmode_actions,
     newmode_actions_value,
+    soapboxx_stories_value,
     top_national_action_taker_value,
     events_attended_past_6_months_value,
     most_recent_event_attended_value,
@@ -26,6 +27,7 @@ WITH correct_values AS (
     top_state_action_taker_sync_string,
     phone_calls_sync_string,
     newmode_actions_sync_string,
+    soapboxx_sync_string,
     top_national_action_taker_sync_string
   FROM {{ ref('correct_participation_values') }}
   WHERE has_participation_data = TRUE  -- Only entities with actual participation data
@@ -55,6 +57,7 @@ current_ab_values AS (
     'Top State Action Taker',
     'Phone Bank Calls Made',
     'NewMode Actions',
+    'Soapboxx Stories',
     'Top National Action Network Activist',
     'Hot Prospect',
     'Organizing Basics',
@@ -83,6 +86,7 @@ pivot_current_values AS (
     MAX(CASE WHEN tag_name = 'Top State Action Taker'               THEN current_value END) as current_top_state_performer,
     MAX(CASE WHEN tag_name = 'Phone Bank Calls Made'                THEN current_value END) as current_phone_calls,
     MAX(CASE WHEN tag_name = 'NewMode Actions'                      THEN current_value END) as current_newmode_actions,
+    MAX(CASE WHEN tag_name = 'Soapboxx Stories'                     THEN current_value END) as current_soapboxx_stories,
     MAX(CASE WHEN tag_name = 'Top National Action Network Activist' THEN current_value END) as current_national_top,
     MAX(CASE WHEN tag_name = 'Hot Prospect'                         THEN current_value END) as current_hot_prospect,
 
@@ -95,6 +99,7 @@ pivot_current_values AS (
     MAX(CASE WHEN tag_name = 'Top State Action Taker'               THEN removal_string END) as removal_ids_top_state_performer,
     MAX(CASE WHEN tag_name = 'Phone Bank Calls Made'                THEN removal_string END) as removal_ids_phone_calls,
     MAX(CASE WHEN tag_name = 'NewMode Actions'                      THEN removal_string END) as removal_ids_newmode_actions,
+    MAX(CASE WHEN tag_name = 'Soapboxx Stories'                     THEN removal_string END) as removal_ids_soapboxx_stories,
     MAX(CASE WHEN tag_name = 'Top National Action Network Activist' THEN removal_string END) as removal_ids_national_top,
     MAX(CASE WHEN tag_name = 'Hot Prospect'                         THEN removal_string END) as removal_ids_hot_prospect
   FROM current_ab_values
@@ -128,6 +133,7 @@ value_comparisons AS (
     COALESCE(pcv.current_top_state_performer, '')   as current_top_state_performer,
     COALESCE(pcv.current_phone_calls, '0')          as current_phone_calls,
     COALESCE(pcv.current_newmode_actions, '0')      as current_newmode_actions,
+    COALESCE(pcv.current_soapboxx_stories, '0')     as current_soapboxx_stories,
     COALESCE(pcv.current_national_top, '')          as current_national_top,
     COALESCE(pcv.current_hot_prospect, '')          as current_hot_prospect,
 
@@ -140,6 +146,7 @@ value_comparisons AS (
     COALESCE(cv.top_state_action_taker_value, '')   as correct_top_state_performer,
     cv.phone_bank_calls_made_value                  as correct_phone_calls,
     cv.newmode_actions_value                        as correct_newmode_actions,
+    cv.soapboxx_stories_value                       as correct_soapboxx_stories,
     COALESCE(cv.top_national_action_taker_value, '') as correct_national_top,
     -- Hot prospect correct value: 'Hot Prospect' if on list, '' if not
     CASE WHEN hp.entity_id IS NOT NULL THEN 'Hot Prospect' ELSE '' END as correct_hot_prospect,
@@ -153,6 +160,7 @@ value_comparisons AS (
     cv.top_state_action_taker_sync_string,
     cv.phone_calls_sync_string,
     cv.newmode_actions_sync_string,
+    cv.soapboxx_sync_string,
     cv.top_national_action_taker_sync_string,
     -- Hot prospect sync string is built here (not stored in correct_participation_values)
     CASE WHEN hp.entity_id IS NOT NULL
@@ -169,6 +177,7 @@ value_comparisons AS (
     pcv.removal_ids_top_state_performer,
     pcv.removal_ids_phone_calls,
     pcv.removal_ids_newmode_actions,
+    pcv.removal_ids_soapboxx_stories,
     pcv.removal_ids_national_top,
     pcv.removal_ids_hot_prospect,
 
@@ -212,6 +221,11 @@ value_comparisons AS (
       WHEN COALESCE(pcv.current_newmode_actions, '0') != cv.newmode_actions_value
       THEN TRUE ELSE FALSE
     END as newmode_needs_update,
+
+    CASE
+      WHEN COALESCE(pcv.current_soapboxx_stories, '0') != cv.soapboxx_stories_value
+      THEN TRUE ELSE FALSE
+    END as soapboxx_needs_update,
 
     CASE
       WHEN COALESCE(pcv.current_national_top, '') != COALESCE(cv.top_national_action_taker_value, '')
@@ -344,6 +358,20 @@ updates_to_apply AS (
     removal_ids_newmode_actions as removal_ids
   FROM value_comparisons
   WHERE newmode_needs_update = TRUE
+
+  UNION ALL
+
+  SELECT
+    campaign_id,
+    entity_id,
+    'Soapboxx Stories' as field_name,
+    'Online Actions Past 6 Months' as field_group,
+    soapboxx_sync_string as sync_string,
+    current_soapboxx_stories as current_value,
+    correct_soapboxx_stories as correct_value,
+    removal_ids_soapboxx_stories as removal_ids
+  FROM value_comparisons
+  WHERE soapboxx_needs_update = TRUE
 
   UNION ALL
 
