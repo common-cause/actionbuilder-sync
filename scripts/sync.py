@@ -12,6 +12,10 @@ Operations:
     prepare_phone_data  Add secondary phones to keeper entities (reads phone_migration_needed)
     apply_assessments   Write auto-assessment levels to entities (reads auto_assessment_rules)
     append_notes        Append 1MC conversation notes to entities (reads 1mc_notes)
+    connect_entities    Connect existing entities to the Organizing Team campaign and
+                        stamp universal OFP competencies (reads organizing_team_connects)
+    insert_organizing_team  Insert stateless OFP attendees directly into the Organizing
+                        Team campaign, universal OFP only (reads organizing_team_inserts)
     snapshot_tag_state  One-time: query AB API for current tag state and log to sync_log
 
 Usage:
@@ -130,6 +134,27 @@ INSERT_TAG_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
 }
 
 # ---------------------------------------------------------------------------
+# OFP universal-field tag interact_ids
+#
+# The "Trainings > Organizing For Power" field is a UNIVERSAL field (one
+# network-level tag object per response, shared across all campaigns). It
+# replaced the archived campaign-local "Activism > Organizing For Power" field,
+# whose responses share the same names. Until the archive + new field replicate
+# to BQ, _get_tag_map() (which reads cln_actionbuilder__tags WHERE status=1)
+# still returns the OLD ids for these names. We override with the new universal
+# ids so add_tagging rows logged to sync_log carry the correct interact_id, which
+# keeps the current_tag_values overlay — and thus OFP idempotency — correct from
+# the first run. The only tags with these names are the OFP responses, so the
+# override is unambiguous. Source of truth: live AB API, verified 2026-06-16.
+# ---------------------------------------------------------------------------
+OFP_UNIVERSAL_TAG_IDS: Dict[str, str] = {
+    'Organizing Basics':     'c06f0496-d59a-4b8f-971e-2aeaea8c8582',
+    'Storytelling':          '0e1102dc-bf89-4c06-9ff6-c74d77efc317',
+    'Relational Organizing': '282b2017-54a5-41bc-b52c-7863e598950d',
+    'Rapid Response Basics': '1ef15001-e59c-4d3d-92fd-7eb001ee9c46',
+}
+
+# ---------------------------------------------------------------------------
 # Known campaign name aliases
 # Allows --campaign arizona in addition to the full UUID.
 # ---------------------------------------------------------------------------
@@ -152,6 +177,7 @@ CAMPAIGN_ALIASES: Dict[str, str] = {
     'new_york':       '9f4b8be6-9baf-430d-b548-77227b787f86',
     'north_carolina': '96dca89a-61bd-49f4-87a8-4368e655f1c3',
     'ohio':           '37c5ef62-f4de-4769-ae19-624e5ae42ecd',
+    'organizing_team': '1e7e58fd-efb4-4810-91dc-2e7aac08625a',
     'oregon':         'e8298624-3568-4d92-948b-4429e55d6271',
     'pennsylvania':   'a00b53e0-1ffb-4692-a347-58fe1ad73aa8',
     'rhode_island':   'd5c48860-3764-4020-9d21-ac6024daefa0',
@@ -383,6 +409,36 @@ def _build_insert_tag(col: str, value: Any) -> Optional[Dict[str, Any]]:
     return tag
 
 
+def _build_person_data(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build an OSDI person_data dict from a feed row's contact columns.
+
+    Reads keys: first_name, last_name, email, phone_number, state, zip_code.
+    Shared by insert_new_records and insert_organizing_team so both build entities
+    identically. country defaults to 'US'; region/postal_code are set when present.
+    """
+    person_data: Dict[str, Any] = {}
+    if row.get('first_name'):
+        person_data['given_name'] = row['first_name']
+    if row.get('last_name'):
+        person_data['family_name'] = row['last_name']
+    if row.get('email'):
+        person_data['email_addresses'] = [
+            {'address': row['email'], 'primary': True}
+        ]
+    if row.get('phone_number'):
+        person_data['phone_numbers'] = [
+            {'number': row['phone_number'], 'primary': True}
+        ]
+    postal: Dict[str, str] = {'country': 'US'}
+    if row.get('state'):
+        postal['region'] = row['state']
+    if row.get('zip_code'):
+        postal['postal_code'] = str(row['zip_code'])
+    person_data['postal_addresses'] = [postal]
+    return person_data
+
+
 def _extract_tag_info(tag: Dict[str, Any]) -> Tuple[str, str]:
     """
     Extract (tag_name, value_written) from a parsed tag dict.
@@ -424,7 +480,11 @@ def _get_tag_map(bq: BigQueryConnector) -> Dict[str, str]:
         FROM actionbuilder_cleaned.cln_actionbuilder__tags
         WHERE status = 1
     """)
-    return {r['name']: r['interact_id'] for r in rows}
+    tag_map = {r['name']: r['interact_id'] for r in rows}
+    # Force the OFP response tags to the new universal-field interact_ids (see
+    # OFP_UNIVERSAL_TAG_IDS) — BQ still returns the old archived ids until replication.
+    tag_map.update(OFP_UNIVERSAL_TAG_IDS)
+    return tag_map
 
 
 def _lookup_tagging_id(
@@ -652,27 +712,7 @@ def insert_new_records(
             continue
 
         # Build OSDI person_data from contact fields
-        person_data: Dict[str, Any] = {}
-
-        if row.get('first_name'):
-            person_data['given_name'] = row['first_name']
-        if row.get('last_name'):
-            person_data['family_name'] = row['last_name']
-        if row.get('email'):
-            person_data['email_addresses'] = [
-                {'address': row['email'], 'primary': True}
-            ]
-        if row.get('phone_number'):
-            person_data['phone_numbers'] = [
-                {'number': row['phone_number'], 'primary': True}
-            ]
-        postal: Dict[str, str] = {'country': 'US'}
-        if row.get('state'):
-            postal['region'] = row['state']
-        if row.get('zip_code'):
-            postal['postal_code'] = str(row['zip_code'])
-        if postal:
-            person_data['postal_addresses'] = [postal]
+        person_data = _build_person_data(row)
 
         # Build add_tags from participation value columns
         add_tags = []
@@ -1399,6 +1439,205 @@ def remove_ep_externals(
     )
 
 
+def connect_entities(
+    bq: BigQueryConnector,
+    ab: Optional[ActionBuilderConnector],
+    campaign_filter: Optional[str],
+    dry_run: bool,
+    limit: Optional[int],
+    sync_logger: Optional[SyncLogger] = None,
+    delay: float = 0.0,
+) -> None:
+    """
+    Connect existing AB entities to the Organizing Team campaign and stamp their
+    universal OFP competencies.
+
+    Reads actionbuilder_sync.organizing_team_connects (one row per
+    entity/competency, all campaign_interact_id = Organizing Team). Groups by
+    entity and calls update_entity_with_tags, which POSTs the entity's identifiers
+    to the campaign — connecting it (new campaigns_entities row) and adding the
+    universal OFP tags in a single call. Because the field is universal, the value
+    is shared network-wide; no campaign-local fields are written.
+
+    Logs connect_entity (once per entity) and add_tagging (per tag) to sync_log.
+    The connect_entity rows let organizing_team_connects skip already-connected
+    entities on the next run (covers BQ replication lag).
+    """
+    logger.info('connect_entities: fetching tag map and rows...')
+    tag_map = _get_tag_map(bq)
+
+    sql = f'SELECT * FROM `{BQ_PROJECT}.{BQ_DATASET}.organizing_team_connects`'
+    if limit:
+        sql += f' LIMIT {limit}'
+    rows = _query(bq, sql)
+
+    if not rows:
+        logger.info('connect_entities: no rows to process')
+        return
+
+    # Group sync strings by (campaign_interact_id, entity_interact_id)
+    groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        campaign_id = str(row['campaign_interact_id'])
+        entity_id = str(row['entity_interact_id'])
+        if campaign_filter and campaign_id != campaign_filter:
+            continue
+        val = row.get('sync_string')
+        if val:
+            try:
+                groups[(campaign_id, entity_id)].append(parse_sync_string(str(val)))
+            except ValueError as e:
+                logger.warning(f'  Skipping malformed sync string: {e}')
+
+    logger.info(f'connect_entities: {len(groups)} entities to connect')
+    n_ok = n_err = n_tags = 0
+
+    for (campaign_id, entity_id), add_tags in groups.items():
+        label = f'entity={entity_id[:8]}... campaign={campaign_id[:8]}...'
+
+        if dry_run:
+            logger.info(
+                f'  [DRY-RUN] Would connect {label} and add {len(add_tags)} tag(s)'
+            )
+            n_ok += 1
+            continue
+
+        try:
+            ab.update_entity_with_tags(campaign_id, entity_id, add_tags)
+            n_ok += 1
+            n_tags += len(add_tags)
+            if sync_logger:
+                sync_logger.log('connect_entity', entity_id, campaign_id, 'ok')
+                for tag in add_tags:
+                    tag_name, value_written = _extract_tag_info(tag)
+                    sync_logger.log(
+                        operation='add_tagging',
+                        entity_interact_id=entity_id,
+                        campaign_interact_id=campaign_id,
+                        status='ok',
+                        tag_interact_id=tag_map.get(tag_name),
+                        tag_name=tag_name,
+                        value_written=value_written,
+                    )
+        except Exception as e:
+            logger.error(f'  ERROR connecting {label}: {e}')
+            n_err += 1
+            if sync_logger:
+                sync_logger.log('connect_entity', entity_id, campaign_id, 'error',
+                                error_detail=str(e)[:500])
+
+        if delay:
+            time.sleep(delay)
+
+    logger.info(
+        f'connect_entities: done. ok={n_ok} err={n_err} tags_added={n_tags}'
+    )
+
+
+def insert_organizing_team(
+    bq: BigQueryConnector,
+    ab: Optional[ActionBuilderConnector],
+    campaign_filter: Optional[str],
+    dry_run: bool,
+    limit: Optional[int],
+    sync_logger: Optional[SyncLogger] = None,
+    delay: float = 0.0,
+) -> None:
+    """
+    Insert stateless OFP attendees (no AB entity and no state-load path) directly
+    into the Organizing Team campaign, with only the universal OFP competencies set.
+
+    Reads actionbuilder_sync.organizing_team_inserts (one row per person/competency).
+    Groups rows by person (email_normalized), builds person_data + add_tags, and
+    calls insert_entity. Unlike insert_new_records, the only tags written are the
+    universal OFP competencies — no campaign-local participation fields.
+    """
+    logger.info('insert_organizing_team: fetching tag map and rows...')
+    tag_map = _get_tag_map(bq)
+
+    sql = f'SELECT * FROM `{BQ_PROJECT}.{BQ_DATASET}.organizing_team_inserts`'
+    if limit:
+        sql += f' LIMIT {limit}'
+    rows = _query(bq, sql)
+
+    if not rows:
+        logger.info('insert_organizing_team: no rows to process')
+        return
+
+    # Group competency rows by person (email_normalized)
+    groups: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        campaign_id = str(row['campaign_interact_id'])
+        if campaign_filter and campaign_id != campaign_filter:
+            continue
+        key = str(row['email_normalized'])
+        g = groups.setdefault(
+            key, {'row': row, 'campaign_id': campaign_id, 'add_tags': []}
+        )
+        val = row.get('sync_string')
+        if val:
+            try:
+                g['add_tags'].append(parse_sync_string(str(val)))
+            except ValueError as e:
+                logger.warning(f'  Skipping malformed sync string: {e}')
+
+    logger.info(f'insert_organizing_team: {len(groups)} people to insert')
+    n_ok = n_err = 0
+
+    for key, g in groups.items():
+        row = g['row']
+        campaign_id = g['campaign_id']
+        add_tags = g['add_tags']
+        person_data = _build_person_data({
+            'first_name': row.get('first_name'),
+            'last_name': row.get('last_name'),
+            'email': row.get('email_normalized'),
+            'phone_number': row.get('phone_number'),
+            'state': row.get('state'),
+            'zip_code': row.get('zip_code'),
+        })
+        pid = str(row['person_id']) if row.get('person_id') else None
+        name = f"{row.get('first_name', '')} {row.get('last_name', '')}".strip()
+        label = f'{name!r} email={key}'
+
+        if dry_run:
+            logger.info(
+                f'  [DRY-RUN] Would insert {label} into campaign {campaign_id[:8]}... '
+                f'with {len(add_tags)} tag(s)'
+            )
+            n_ok += 1
+            continue
+
+        try:
+            ab.insert_entity(campaign_id, person_data, add_tags or None)
+            n_ok += 1
+            if sync_logger:
+                sync_logger.log('insert_entity', None, campaign_id, 'ok', person_id=pid)
+                for tag in add_tags:
+                    tag_name, value_written = _extract_tag_info(tag)
+                    sync_logger.log(
+                        operation='add_tagging',
+                        entity_interact_id=None,
+                        campaign_interact_id=campaign_id,
+                        status='ok',
+                        person_id=pid,
+                        tag_interact_id=tag_map.get(tag_name),
+                        tag_name=tag_name,
+                        value_written=value_written,
+                    )
+        except Exception as e:
+            logger.error(f'  ERROR inserting {label}: {e}')
+            n_err += 1
+            if sync_logger:
+                sync_logger.log('insert_entity', None, campaign_id, 'error',
+                                person_id=pid, error_detail=str(e)[:500])
+
+        if delay:
+            time.sleep(delay)
+
+    logger.info(f'insert_organizing_team: done. ok={n_ok} err={n_err}')
+
+
 OPERATIONS = {
     'update_records': update_records,
     'insert_new_records': insert_new_records,
@@ -1409,6 +1648,8 @@ OPERATIONS = {
     'apply_assessments': apply_assessments,
     'append_notes': append_notes,
     'snapshot_tag_state': snapshot_tag_state,
+    'connect_entities': connect_entities,
+    'insert_organizing_team': insert_organizing_team,
 }
 
 
@@ -1481,9 +1722,9 @@ def main() -> None:
 
     op_fn = OPERATIONS[args.operation]
     kwargs: Dict[str, Any] = {}
-    if args.operation in ('remove_records', 'remove_ep_externals', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes'):
+    if args.operation in ('remove_records', 'remove_ep_externals', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes', 'connect_entities', 'insert_organizing_team'):
         kwargs['delay'] = args.delay
-    if args.operation in ('remove_records', 'remove_ep_externals', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes'):
+    if args.operation in ('remove_records', 'remove_ep_externals', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes', 'connect_entities', 'insert_organizing_team'):
         kwargs['sync_logger'] = sync_logger
     op_fn(bq, ab, campaign_filter, args.dry_run, args.limit, **kwargs)
 

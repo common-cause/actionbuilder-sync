@@ -4,7 +4,7 @@
 
 This project calculates participation values for people in ActionBuilder from external platforms (Mobilize, Action Network, ScaleToWin, EP Archive) and pushes those values into ActionBuilder as tag responses via a custom sync job. It runs entirely in BigQuery as a set of dbt views.
 
-**Current status (2026-06-11):** Nightly maintenance runs on Civis at 10 PM ET (workflow #119217): `insert_new_records` → `update_records` → `apply_assessments` → `append_notes` across all 24 state campaigns (22 original + VA + DC). Dedup completed March 2026. Platforms feeding tags: Mobilize, Action Network (incl. state actions), ScaleToWin, NewMode, EP Archive, OFP training. 1 Million Conversations (1MC) role/conversation/notes models are rolling out (see `MEMORY.md` → 1MC roadmap).
+**Current status (2026-06-16):** Nightly maintenance runs on Civis at 10 PM ET (workflow #119217): `insert_new_records` → `update_records` → `apply_assessments` → `append_notes` → `connect_entities` → `insert_organizing_team` across all 24 state campaigns (22 original + VA + DC) plus the crosscutting **Organizing Team** campaign (id 26). Dedup completed March 2026. Platforms feeding tags: Mobilize, Action Network (incl. state actions), ScaleToWin, NewMode, EP Archive, OFP training. The OFP "Organizing For Power" field is now a **universal** field (section `Trainings`) — one network-level tag object shared across all campaigns. OFP attendance is also a load qualifier. 1 Million Conversations (1MC) role/conversation/notes models are rolling out (see `MEMORY.md` → 1MC roadmap).
 
 ---
 
@@ -189,7 +189,7 @@ Aggregated breakdown of pending test campaign updates by field and change type, 
 
 ## Currently Synced Fields
 
-Section is `Participation` for every field except Hot Prospect (`Engagement`). The last column is the `TAG_COLS` output column in `updates_needed` / `sync.py` (see "How a tag reaches the column").
+Section is `Participation` for every field except Hot Prospect (`Engagement`) and the OFP competencies (`Trainings` — a **universal** section). The last column is the `TAG_COLS` output column in `updates_needed` / `sync.py` (see "How a tag reaches the column").
 
 | Field Name (AB field) | Category (field_group) | Type | Source model | → TAG_COLS column |
 |---|---|---|---|---|
@@ -204,12 +204,32 @@ Section is `Participation` for every field except Hot Prospect (`Engagement`). T
 | Top State Action Taker | State Online Actions | standard | `state_action_network_top_performers` | `state_online_actions_tag` |
 | Top National Action Network Activist | National Online Actions | standard | `action_network_national_top_performers` | `national_online_actions_tag` |
 | Hot Prospect *(Section: Engagement / Cat: Prospect Identification)* | — | standard | `hot_prospects` (Mobilize+AN+STW+NewMode activity) | `engagement_tag` |
-| OFP competencies: Organizing Basics, **Storytelling**, Relational Organizing, Rapid Response Basics | Organizing for Power | standard (additive multi-select) | `ofp_attendance` (Mobilize event 907019) | `ofp_tag` |
+| OFP competencies: Organizing Basics, **Storytelling**, Relational Organizing, Rapid Response Basics | Organizing For Power *(Section: **Trainings** — universal)* | standard (additive multi-select) | `ofp_attendance` (Mobilize event 907019) | `ofp_tag` |
 
 **Notes:**
 - **`current_tag_values` is an overlay model:** it merges `sync_log` tag operations on top of the (sometimes stale) BQ snapshot of `taggable_logbook`, so the "what is currently in AB" side reflects recent sync runs and covers the hard-delete replication gap. A `_bq_only` twin preserves the original snapshot-only logic. See `CLAUDE.md` → "Sync Log Architecture".
 - **Name-collision warning:** "**Storytelling**" already exists as an OFP training competency tag (above). A Soapboxx storytelling tag must use a distinct name (e.g. "Soapboxx Stories").
 - **1MC (in progress):** `updates_needed` also emits `million_conversations_*` columns (roles, total conversations, prospects) from the `1mc_*` models, and `append_notes` writes 1MC notes from `1mc_notes`. The tag columns are not yet in `sync.py` `TAG_COLS` (rollout pending).
+
+---
+
+## The Organizing Team campaign (id 26)
+
+A crosscutting (non-state) campaign for the organizing team to recruit OFP training attendees into Million Conversations. It is populated by two dedicated sync operations that run after `append_notes`, and is **not** a state campaign — keep it out of state routing.
+
+**Universal-field semantics.** `Trainings > Organizing For Power` is a *universal* field: a single network-level tag object that auto-appears in every campaign. Writing an OFP competency through any campaign sets it network-wide, so an attendee's competencies are visible in campaign 26 once stamped anywhere. Universal taggings are **API-undeletable** (DELETE/list 404; signup-helper `remove_tags` silently no-ops), so OFP stays **additive-only** — there is no removal path. `ofp_attendance` keys "already has it" on the new universal tag interact_ids (not names) so the archived campaign-local field's lingering taggings don't cause false skips during the BQ-replication transition.
+
+**OFP as a load qualifier.** `master_load_qualifiers` includes an `ofp_qualifiers` source (all-time, sourced from `ofp_universe`), so any OFP attendee qualifies for AB load. State is derived from the attendee's Mobilize **zip** via `geo_crosswalks_cleaned.cln_geo_crosswalks__zip_county_lookup` (the voter-file state fallback misses people not matched to the voter file). Staffed-state attendees thus load into their state campaign via the normal `insert_new_records` path.
+
+**The feeds** (all built on `ofp_universe`, the person-level OFP-attendee base):
+
+| Model | Population | Sync op | Destination |
+|---|---|---|---|
+| `organizing_team_connects` | OFP attendees already in AB (state-campaign entity; pick-one = most-recently-updated; Test/26 excluded; already-in-26 filtered via `campaigns_entities` + `sync_log connect_entity`) | `connect_entities` (`update_entity_with_tags` → connect + stamp) | Connect entity to 26 + universal OFP |
+| `organizing_team_inserts` | OFP attendees not in AB **and** with no state-load path (no zip / zip in an unstaffed state); guards mirror `deduplicated_names_to_load` | `insert_organizing_team` (`insert_entity`, universal OFP only) | New entity in 26 |
+| `organizing_team_review` | OFP attendees in AB but only in non-state campaigns (e.g. Test) — can neither connect nor insert | — (manual) | Surface for one-time manual state insert |
+
+Staffed-state attendees not yet in AB are loaded into their state campaign first, then connected to 26 once replicated (bounded 1–2 night lag).
 
 ---
 

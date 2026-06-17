@@ -50,13 +50,26 @@ entities_in_campaigns AS (
 ),
 
 current_ofp_tags AS (
-  -- What OFP tags does each entity already have?
+  -- What OFP tags does each entity already have in the NEW universal field?
+  --
+  -- Match on the universal "Trainings > Organizing For Power" tag interact_ids,
+  -- NOT on tag_name. The archived campaign-local "Activism > Organizing For Power"
+  -- field shares the same response names ('Organizing Basics', etc.) and its old
+  -- tags still read as status=1 in BQ until the archive replicates, plus historical
+  -- sync_log rows carry the old interact_ids. Keying on the new universal interact_ids
+  -- makes "already has it" detection see only the new field, so existing attendees
+  -- get (re)written to the universal field exactly once.
   SELECT
     entity_id,
     campaign_id,
     tag_name as ofp_tag
   FROM {{ ref('current_tag_values') }}
-  WHERE tag_name IN ('Organizing Basics', 'Storytelling', 'Relational Organizing', 'Rapid Response Basics')
+  WHERE tag_interact_id IN (
+    'c06f0496-d59a-4b8f-971e-2aeaea8c8582',  -- Organizing Basics
+    '0e1102dc-bf89-4c06-9ff6-c74d77efc317',  -- Storytelling
+    '282b2017-54a5-41bc-b52c-7863e598950d',  -- Relational Organizing
+    '1ef15001-e59c-4d3d-92fd-7eb001ee9c46'   -- Rapid Response Basics
+  )
 )
 
 -- Entity+campaign+tag combos that need to be ADDED (not already present)
@@ -65,7 +78,10 @@ SELECT
   oet.entity_id,
   oet.ofp_tag as field_name,
   'Organizing for Power' as field_group,
-  CONCAT('Activism:|:Organizing for Power:|:', oet.ofp_tag, ':|:standard_response:', oet.ofp_tag) as sync_string,
+  -- Universal field: section "Trainings", field "Organizing For Power" (capital F).
+  -- field_group above stays 'Organizing for Power' — it is an internal routing token
+  -- consumed by updates_needed's ofp_tag CASE, not sent to the API.
+  CONCAT('Trainings:|:Organizing For Power:|:', oet.ofp_tag, ':|:standard_response:', oet.ofp_tag) as sync_string,
   '' as current_value,
   oet.ofp_tag as correct_value,
   CAST(NULL AS STRING) as removal_ids

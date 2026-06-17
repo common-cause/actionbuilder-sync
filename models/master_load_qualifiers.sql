@@ -221,6 +221,32 @@ soapboxx_qualifiers AS (
     AND sbx.email_normalized IS NOT NULL
 ),
 
+ofp_qualifiers AS (
+  -- Organizing for Power training attendees (Mobilize event 907019 timeslots via the
+  -- ofp_training_map seed). OFP is a deliberate CC training program, so attendance
+  -- qualifies someone for AB load on its own — all-time, NOT subject to the rolling
+  -- 365-day Mobilize window (mirrors the "any submission qualifies" pattern of
+  -- newmode/soapboxx). No anti-poaching gate: attending our OFP training is direct CC
+  -- engagement. Sourced from ofp_universe (collapsed to one row per attendee).
+  SELECT DISTINCT
+    first_name,
+    last_name,
+    phone_number,
+    email_normalized as email,
+    state,                          -- zip-derived (see ofp_universe); routes to state campaign
+    CAST(NULL AS STRING) as county,
+    zip_code,
+    CAST(NULL AS STRING) as source_code,
+    CAST(NULL AS TIMESTAMP) as created_at,
+    CAST(NULL AS STRING) as shifted_2024,
+    CAST(NULL AS INT64) as events_6m,
+    CAST(NULL AS INT64) as phone_bank_dials,
+    'OFP Training' as qualification_reason,
+    email_normalized,
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(phone_number, ''), r'^\+', ''), r'^1', ''), r'[^\d]', '') as phone_normalized
+  FROM {{ ref('ofp_universe') }}
+),
+
 all_qualifiers AS (
   -- Combine all qualification sources
   SELECT * FROM ep_qualifiers
@@ -234,6 +260,8 @@ all_qualifiers AS (
   SELECT * FROM newmode_qualifiers
   UNION ALL
   SELECT * FROM soapboxx_qualifiers
+  UNION ALL
+  SELECT * FROM ofp_qualifiers
 ),
 
 qualifiers_with_person_ids AS (

@@ -88,7 +88,8 @@ ActionBuilder Sync/
 │   ├── mobilize_event_data.sql            # Mobilize attendance aggregated by email
 │   ├── scaletowin_call_data.sql           # ScaleToWin calls aggregated by phone
 │   ├── newmode_actions.sql                # NewMode letter submissions
-│   ├── ofp_attendance.sql                 # Organizing for Power training attendance
+│   ├── ofp_attendance.sql                 # OFP training attendance → universal Trainings field
+│   ├── ofp_universe.sql                    # Person-level OFP attendees (base for campaign-26 feeds)
 │   ├── state_action_network_top_performers.sql
 │   ├── action_network_national_top_performers.sql
 │   │
@@ -109,9 +110,14 @@ ActionBuilder Sync/
 │   ├── phone_migration_needed.sql         # Phones to copy to keeper entities before deletion
 │   │
 │   │   ── New record insertion ──
-│   ├── master_load_qualifiers.sql         # People who qualify for AB entry
+│   ├── master_load_qualifiers.sql         # People who qualify for AB entry (incl. OFP attendance)
 │   ├── deduplicated_names_to_load.sql     # Sync-log filtered wrapper (used by sync.py)
 │   ├── deduplicated_names_to_load_bq_only.sql  # BQ-only version
+│   │
+│   │   ── Organizing Team campaign (id 26) ──
+│   ├── organizing_team_connects.sql       # OFP attendees in AB → connect to campaign 26
+│   ├── organizing_team_inserts.sql        # Stateless OFP attendees → insert into campaign 26
+│   ├── organizing_team_review.sql         # OFP attendees that can't be routed cleanly
 │   │
 │   │   ── Diagnostics ──
 │   ├── identity_resolution.sql            # Entity → person_id mapping with data-source flags
@@ -123,6 +129,9 @@ ActionBuilder Sync/
 │   ├── insert_new_records.sh        # Nightly: add new entities
 │   ├── update_records.sh            # Nightly: sync tag values
 │   ├── apply_assessments.sh         # Nightly: set assessment levels
+│   ├── append_notes.sh              # Nightly: append 1MC conversation notes
+│   ├── connect_entities.sh          # Nightly: connect OFP attendees to campaign 26
+│   ├── insert_organizing_team.sh    # Nightly: insert stateless OFP attendees into campaign 26
 │   ├── snapshot_tag_state.sh        # On-demand: capture tag ground truth from API
 │   ├── cleanup_duplicate_tags.sh    # On-demand: remove duplicate taggings
 │   └── remove_duplicate_entities.sh # One-time: dedup execution
@@ -227,9 +236,10 @@ The MCP connects to `proj-tmc-mem-com` using the shared `BIGQUERY_CREDENTIALS_PA
 3. **[Done]** Dedup execution — 8,921 entities removed, 154 emails + 91 phones migrated, 3,532 new entities inserted
 4. **[Done]** Sync log architecture — `sync_log` BQ table + dbt wrapper views compensate for BQ replication gaps
 5. **[Done]** Auto-assessments — `auto_assessment_rules` + `apply_assessments` operation, upgrade-only write policy
-6. **[Done]** OFP training tags — Organizing for Power attendance synced via Mobilize timeslot mapping
+6. **[Done]** OFP training tags — now the **universal** `Trainings > Organizing For Power` field (one network-level tag); attendance synced via Mobilize timeslot mapping and is a load qualifier
 7. **[Done]** `taggable_logbook` replication — AB fixed their internal mirror (~2026-03-21); overlay model retained for hard-delete gap
-8. **[Done]** Nightly maintenance — Civis runs insert_new_records → update_records → apply_assessments at 10 PM ET
-9. **[Active]** Resolve open `dedup_unresolved` pairs (16 same-campaign ambiguous pairs)
-10. **[Planned]** Slack alerting / replication sentinel — waiting on IT for Slack app + webhook
-11. **[Future]** New data flows: Airtable, Zoom, Mobilize relational organizing campaign
+8. **[Done]** Nightly maintenance — Civis runs insert_new_records → update_records → apply_assessments → append_notes → connect_entities → insert_organizing_team at 10 PM ET
+9. **[Done]** Organizing Team campaign (id 26) — OFP attendees connected/inserted into the crosscutting campaign with the universal OFP field
+10. **[Active]** Resolve open `dedup_unresolved` pairs (16 same-campaign ambiguous pairs)
+11. **[Planned]** Slack alerting / replication sentinel — waiting on IT for Slack app + webhook
+12. **[Future]** New data flows: Airtable, Zoom, Mobilize relational organizing campaign
