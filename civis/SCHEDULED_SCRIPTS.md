@@ -19,6 +19,10 @@ at run time, **pinned to a release tag** (currently `@v0.2.0`) so library pushes
 to master never change these jobs — bump the pin in the `.sh` files deliberately
 when upgrading. (`python-dotenv` comes with it as a base dependency.)
 
+**Clone timing:** each container script clones the repo at the start of *that
+script's own run*, not at workflow start. So a push to `master` mid-workflow is
+picked up by any step that hasn't started yet (and by every step on the next run).
+
 ## Workflows
 
 ### Nightly ActionBuilder Update
@@ -60,14 +64,14 @@ when upgrading. (`python-dotenv` comes with it as a base dependency.)
 
 ### connect_entities.sh — AB Organizing Team Connect
 - **Type:** Scheduled (via Nightly ActionBuilder Update, step 5)
-- **Civis script:** _(create container script; add to workflow #119217 after AB Notes Append)_
+- **Civis script:** [#357827345](https://platform.civisanalytics.com/spa/#/scripts/containers/357827345) — created 2026-06-16 (cloned from AB Notes Append), added to workflow #119217 as step 5
 - **APIs:** ActionBuilder API (~4 req/sec, throttled 0.3s), BigQuery (read + sync_log write)
 - **Input view:** `actionbuilder_sync.organizing_team_connects`
 - **Description:** Connects existing AB entities (OFP training attendees in a state campaign) to the crosscutting **Organizing Team** campaign (id 26) and stamps their universal `Trainings > Organizing For Power` competencies, via `update_entity_with_tags` (POST person.identifiers → connect + add tags in one call). Idempotent via sync_log `connect_entity` rows (skips already-connected entities, covering BQ replication lag).
 
 ### insert_organizing_team.sh — AB Organizing Team Inserts
 - **Type:** Scheduled (via Nightly ActionBuilder Update, step 6)
-- **Civis script:** _(create container script; add to workflow #119217 after AB Organizing Team Connect)_
+- **Civis script:** [#357827433](https://platform.civisanalytics.com/spa/#/scripts/containers/357827433) — created 2026-06-16 (cloned from AB Notes Append), added to workflow #119217 as step 6
 - **APIs:** ActionBuilder API (~4 req/sec, throttled 0.3s), BigQuery (read + sync_log write)
 - **Input view:** `actionbuilder_sync.organizing_team_inserts`
 - **Description:** Inserts OFP attendees who are not in AB and have no state-load path (no resolvable staffed state) directly into the Organizing Team campaign (id 26), with only the universal OFP competencies set. Insert guards: first_name NOT NULL, gmail plus-alias filter; excludes anyone already in AB or routed to a state campaign by `deduplicated_names_to_load`.
