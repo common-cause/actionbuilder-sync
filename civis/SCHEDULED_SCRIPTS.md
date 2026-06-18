@@ -31,8 +31,15 @@ picked up by any step that hasn't started yet (and by every step on the next run
 - **Typical runtime:** 1.5–4 hours (observed)
 - **Steps:** insert_new_records.sh → update_records.sh → apply_assessments.sh → append_notes.sh → connect_entities.sh → insert_organizing_team.sh
 - Step names in Civis: AB Inserts / AB Tag Updates / AB Assessment Setting / AB Notes Append / AB Organizing Team Connect / AB Organizing Team Inserts (sequential)
+- **Pending step 0 — `run_dbt.sh`:** a `dbt run` to prepend before AB Inserts. The script is committed and ready but is **NOT yet added to the workflow** — add it as the first step via the Civis UI. Required before any model is materialized as a table (a table goes stale without a nightly dbt run); harmless (just recreates views) until then. See Scripts below.
 
 ## Scripts
+
+### run_dbt.sh — dbt run (intended nightly step 0)
+- **Type:** Scheduled (intended Nightly step 0) — **committed but NOT yet wired into workflow #119217**
+- **Civis script:** TBD — create a GitHub-backed container script (body `bash app/civis/run_dbt.sh`) and add it as the **first** step of the workflow.
+- **APIs:** BigQuery (recreates views; recomputes any table-materialized models)
+- **Description:** Runs `dbt run` to refresh all `actionbuilder_sync` models so the downstream sync ops read current data. Installs `dbt-bigquery==1.11.0`; `run_dbt.py` loads `BIGQUERY_CREDENTIALS_PASSWORD` (Civis job env var) into a temp keyfile for the dbt profile. **Must be first** once any model is `materialized='table'` — a table is only as fresh as the last dbt run. Until then it's a harmless view refresh. Exits non-zero on dbt failure so the workflow halts rather than syncing stale data.
 
 ### insert_new_records.sh — AB Inserts
 - **Type:** Scheduled (via Nightly ActionBuilder Update, step 1)
