@@ -12,6 +12,9 @@ Operations:
                         via the Mobilize path (reads mobilize_external_removal)
     prepare_email_data  Add secondary emails to keeper entities (reads email_migration_needed)
     prepare_phone_data  Add secondary phones to keeper entities (reads phone_migration_needed)
+    backfill_region     One-shot: stamp zip-derived state as the address region on Organizing
+                        Team (campaign 26) entities missing it, so per-state AB saved queries
+                        work (reads organizing_team_region_backfill)
     apply_assessments   Write auto-assessment levels to entities (reads auto_assessment_rules)
     append_notes        Append 1MC conversation notes to entities (reads 1mc_notes)
     connect_entities    Connect existing entities to the Organizing Team campaign and
@@ -995,6 +998,85 @@ def prepare_phone_data(
     logger.info(f'prepare_phone_data: done. ok={n_ok} err={n_err} skipped={n_skip}')
 
 
+def backfill_region(
+    bq: BigQueryConnector,
+    ab: Optional[ActionBuilderConnector],
+    campaign_filter: Optional[str],
+    dry_run: bool,
+    limit: Optional[int],
+    delay: float = 0.0,
+    sync_logger: Optional[SyncLogger] = None,
+) -> None:
+    """
+    One-shot: stamp the authoritative (zip-derived) state as the address region on
+    Organizing Team (campaign 26) entities that are missing an AB address state, so
+    per-state saved queries on the campaign-26 wallchart return them reliably.
+
+    Reads actionbuilder_sync.organizing_team_region_backfill and calls update_person
+    with a postal_addresses region for each entity_interact_id (same partial-update
+    pattern as prepare_phone_data). Missing-only — never overwrites an existing state.
+    """
+    logger.info('backfill_region: fetching rows from organizing_team_region_backfill...')
+    sql = (
+        f'SELECT entity_interact_id, campaign_interact_id, first_name, last_name, '
+        f'email, state, zip_code '
+        f'FROM `{BQ_PROJECT}.{BQ_DATASET}.organizing_team_region_backfill`'
+    )
+    if limit:
+        sql += f' LIMIT {limit}'
+    rows = _query(bq, sql)
+
+    if not rows:
+        logger.info('backfill_region: no rows to process')
+        return
+
+    logger.info(f'backfill_region: {len(rows)} entities to consider')
+    n_ok = n_err = n_skip = 0
+
+    for row in rows:
+        entity_id = str(row['entity_interact_id'])
+        campaign_id = row.get('campaign_interact_id')
+        state = row.get('state')
+        label = f'{entity_id[:8]}... (state={state})'
+
+        if not campaign_id:
+            logger.warning(f'  Skipping {label}: no campaign_interact_id')
+            n_skip += 1
+            continue
+        if campaign_filter and campaign_id != campaign_filter:
+            n_skip += 1
+            continue
+        if not state:
+            n_skip += 1
+            continue
+
+        postal: Dict[str, str] = {'country': 'US', 'region': str(state)}
+        if row.get('zip_code'):
+            postal['postal_code'] = str(row['zip_code'])
+
+        if dry_run:
+            logger.info(f'  [DRY-RUN] Would set region {label} (campaign={campaign_id[:8]}...)')
+            n_ok += 1
+            continue
+
+        try:
+            ab.update_person(campaign_id, entity_id, {'postal_addresses': [postal]})
+            logger.debug(f'  Set region {label}')
+            n_ok += 1
+            if sync_logger:
+                sync_logger.log('backfill_region', entity_id, campaign_id, 'ok', value_written=str(state))
+            if delay:
+                time.sleep(delay)
+        except Exception as e:
+            logger.error(f'  ERROR setting region {label}: {e}')
+            n_err += 1
+            if sync_logger:
+                sync_logger.log('backfill_region', entity_id, campaign_id, 'error',
+                                value_written=str(state), error_detail=str(e)[:500])
+
+    logger.info(f'backfill_region: done. ok={n_ok} err={n_err} skipped={n_skip}')
+
+
 def apply_assessments(
     bq: BigQueryConnector,
     ab: Optional[ActionBuilderConnector],
@@ -1738,6 +1820,7 @@ OPERATIONS = {
     'remove_mobilize_externals': remove_mobilize_externals,
     'prepare_email_data': prepare_email_data,
     'prepare_phone_data': prepare_phone_data,
+    'backfill_region': backfill_region,
     'apply_assessments': apply_assessments,
     'append_notes': append_notes,
     'snapshot_tag_state': snapshot_tag_state,
@@ -1815,9 +1898,9 @@ def main() -> None:
 
     op_fn = OPERATIONS[args.operation]
     kwargs: Dict[str, Any] = {}
-    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'prepare_email_data', 'prepare_phone_data', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes', 'connect_entities', 'insert_organizing_team'):
+    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'prepare_email_data', 'prepare_phone_data', 'backfill_region', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes', 'connect_entities', 'insert_organizing_team'):
         kwargs['delay'] = args.delay
-    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes', 'connect_entities', 'insert_organizing_team'):
+    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'backfill_region', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes', 'connect_entities', 'insert_organizing_team'):
         kwargs['sync_logger'] = sync_logger
     op_fn(bq, ab, campaign_filter, args.dry_run, args.limit, **kwargs)
 

@@ -12,10 +12,16 @@
 --   - not in AB, unstaffed/NULL     -> dropped by deduplicated_names_to_load's state
 --                                      filter, so NOT in that feed -> included here
 --
--- We therefore take OFP attendees who are (a) not in AB and (b) not in
--- deduplicated_names_to_load, then re-apply the insert guards so junk (test accounts,
--- nameless records) never reaches campaign 26. Anti-joins use BOTH person_id and
--- normalized email for robustness against email differences across feeds.
+-- We therefore take OFP attendees who are (a) not in AB and (b) have no staffed state-load
+-- path, then re-apply the insert guards so junk (test accounts, nameless records) never
+-- reaches campaign 26. AB anti-joins use BOTH person_id and normalized email for robustness.
+--
+-- "No state-load path" is determined directly: neither the zip-derived state nor the voter-file
+-- (NTL) fallback is a staffed campaign — the same state derivation master_load_qualifiers uses.
+-- This deliberately does NOT anti-join deduplicated_names_to_load: that view inlines the entire
+-- master_load_qualifiers tree, which pushed this model past BigQuery's query planner ("too many
+-- subqueries"), so insert_organizing_team errored every nightly run and zero stateless attendees
+-- were ever inserted. (Verified the direct check produces the same set with no double-insert risk.)
 --
 -- Grain: one row per (person, competency); sync.py insert_organizing_team groups by
 -- person to build one entity with all its OFP tags.
@@ -40,12 +46,17 @@ ab_person_ids AS (
     AND ep.person_id IS NOT NULL
 ),
 
--- People the regular sync will load into a state campaign (so not ours to insert into 26)
-state_loadable AS (
-  SELECT DISTINCT
-    person_id,
-    LOWER(TRIM(email)) AS email_norm
-  FROM {{ ref('deduplicated_names_to_load') }}
+-- Voter-file (NTL) state, the state-routing fallback when zip-derived state is null/unstaffed
+-- — mirrors master_load_qualifiers' final_with_voter_file_fallback. Replaces the former
+-- anti-join against deduplicated_names_to_load (which inlined the whole master_load_qualifiers
+-- tree and made this model exceed BigQuery's query planner).
+voter_file_state AS (
+  SELECT ident.person_id, MAX(ts.vb_tsmart_state) AS vf_state
+  FROM core_targetsmart_enhanced.enh_activistpools__identities ident
+  JOIN targetsmart_enhanced.enh_targetsmart__ntl_current ts
+    ON ident.voterbase_id = ts.vb_voterbase_id
+  WHERE ident.person_id IS NOT NULL
+  GROUP BY ident.person_id
 ),
 
 -- States that have an active AB campaign. Anyone whose (zip-derived) state is staffed
@@ -86,17 +97,17 @@ eligible AS (
   LEFT JOIN ab_emails ae      ON ae.email_norm = op.email_normalized
   LEFT JOIN ab_person_ids api ON api.person_id = op.person_id
 
-  -- Not going to be loaded into a state campaign (by email or person_id)
-  LEFT JOIN state_loadable sl_e ON sl_e.email_norm = op.email_normalized
-  LEFT JOIN state_loadable sl_p ON sl_p.person_id  = op.person_id
+  -- Voter-file state for the routing fallback
+  LEFT JOIN voter_file_state vf ON vf.person_id = op.person_id
 
   WHERE ae.email_norm IS NULL
     AND api.person_id IS NULL
-    AND sl_e.email_norm IS NULL
-    AND sl_p.person_id IS NULL
 
-    -- Strictly "no state campaign": exclude anyone whose zip-derived state is staffed
-    AND (op.state IS NULL OR op.state NOT IN (SELECT state FROM staffed_states))
+    -- No staffed state-load path: neither the zip-derived state nor the voter-file fallback
+    -- is a staffed campaign. (Staffed-state attendees reach 26 via organizing_team_connects
+    -- once their state entity exists, not via this insert feed.)
+    AND (op.state    IS NULL OR UPPER(op.state)    NOT IN (SELECT UPPER(state) FROM staffed_states))
+    AND (vf.vf_state IS NULL OR UPPER(vf.vf_state) NOT IN (SELECT UPPER(state) FROM staffed_states))
 
     -- Insert guards (mirror deduplicated_names_to_load)
     AND op.first_name IS NOT NULL

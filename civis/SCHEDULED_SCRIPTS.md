@@ -74,7 +74,7 @@ picked up by any step that hasn't started yet (and by every step on the next run
 - **Civis script:** [#357827433](https://platform.civisanalytics.com/spa/#/scripts/containers/357827433) — created 2026-06-16 (cloned from AB Notes Append), added to workflow #119217 as step 6
 - **APIs:** ActionBuilder API (~4 req/sec, throttled 0.3s), BigQuery (read + sync_log write)
 - **Input view:** `actionbuilder_sync.organizing_team_inserts`
-- **Description:** Inserts OFP attendees who are not in AB and have no state-load path (no resolvable staffed state) directly into the Organizing Team campaign (id 26), with only the universal OFP competencies set. Insert guards: first_name NOT NULL, gmail plus-alias filter; excludes anyone already in AB or routed to a state campaign by `deduplicated_names_to_load`.
+- **Description:** Inserts OFP attendees who are not in AB and have no state-load path directly into the Organizing Team campaign (id 26), with only the universal OFP competencies set. "No state-load path" = neither zip-derived nor voter-file state is a staffed campaign (direct check). Insert guards: first_name NOT NULL, gmail plus-alias filter; excludes anyone already in AB. **Note (2026-06-18):** previously anti-joined `deduplicated_names_to_load`, which inlined the whole `master_load_qualifiers` tree and exceeded BigQuery's query planner — the step errored silently every run (0 inserts). Replaced with the direct staffed-state check (verified equivalent, no double-insert risk).
 
 ## On-Demand Scripts
 
