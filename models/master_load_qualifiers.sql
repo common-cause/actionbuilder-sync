@@ -1,3 +1,11 @@
+-- Materialized as a TABLE (not a view): this is the deep, NTL-joined tree that every heavy
+-- downstream re-inlines (deduplicated_names_to_load, ep/mobilize_external_removal, the OT feeds).
+-- As a view it pushed those consumers past BigQuery's query-planner ceiling ("too many
+-- subqueries"). As a table they read flat stored rows instead. REQUIRES the nightly to run dbt
+-- first (civis/run_dbt.sh, workflow step 0) so this table reflects current platform data — a
+-- table is only as fresh as the last dbt run.
+{{ config(materialized='table') }}
+
 -- Emails of EP volunteers whose source code points to a coalition partner
 -- (LWVMA, MassVOTE, ACLUM, kos, dailykos, LCR, etc.) per external_ptv_source_codes
 -- (the canonical, case-collision-robust external-code set).
