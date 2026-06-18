@@ -27,6 +27,8 @@ The sync job is `scripts/sync.py` in this repository. It replaces the original T
 | `append_notes` | `1mc_notes` | Append 1MC conversation notes to entities — **nightly** |
 | `snapshot_tag_state` | (API-driven) | Capture tag ground truth from AB API into sync_log — **on-demand** |
 | `remove_records` | `dedup_candidates` | Remove duplicate entities from campaigns — **one-time, completed** |
+| `remove_ep_externals` | `ep_external_removal` | Remove partner-org EP volunteers loaded via the old EP-shift path — **one-shot** |
+| `remove_mobilize_externals` | `mobilize_external_removal` | Remove other groups' EP volunteers who entered via Mobilize (Rule A/B anti-poaching) — **one-shot, review before running** |
 | `prepare_email_data` | `email_migration_needed` | Migrate emails to keeper entities before dedup — **one-time, completed** |
 | `prepare_phone_data` | `phone_migration_needed` | Migrate phones to keeper entities before dedup — **one-time, completed** |
 
@@ -178,6 +180,17 @@ Pre-deletion contact migration feeds. For each duplicate pair in `dedup_candidat
 
 #### `master_load_qualifiers` + `deduplicated_names_to_load`
 New record insertion infrastructure. Identifies people from external platforms who qualify to be added to ActionBuilder but don't yet have a record. `deduplicated_names_to_load` applies full AB exclusion and within-feed dedup. Runs nightly via `insert_new_records`. Filters out records with NULL first_name (AB API requires it).
+
+**Anti-poaching (other groups' EP volunteers).** The Mobilize qualifier is gated so we don't claim other coalition groups' Election Protection volunteers who surface in our shared Mobilize feeds:
+- **Rule A** — a person whose PTV record is under another group's source code (`ep_archive.source_codes.external = 'Y'`, captured by `external_ep_emails`) loads via Mobilize only if they ALSO have an independent, *non-Mobilize* CC touch: a *subscribed* AN action, a NewMode submission, a Soapboxx story, a ScaleToWin shift, or a CC-coded PTV record (`rule_a_rescue_emails` / `scaletowin_rescue_phones`). An **unsubscribed** AN record never counts.
+- **Rule B** — a Mobilize signup whose `referrer__utm_source` matches an external PTV source code (`external_source_codes`) does not qualify the person.
+- **OFP is exempt** — `ofp_qualifiers` is a separate, ungated branch; OFP attendees always qualify.
+- The "unsubbed AN doesn't count" rule also tightens the existing EP-shifter override (`cc_engaged_emails`), whose AN branch is now gated on `subscribed_an_emails` (`cln_actionnetwork__subscription_statuses.status = 1`).
+- The external/internal call comes from one canonical model, **`external_ptv_source_codes`** (used by `external_ep_emails`, `cc_coded_ep_emails`, and the Mobilize `external_source_codes`). It is robust to two `ep_archive.source_codes` data issues: case collisions (a code is external only if *no* casing of it is flagged internal — internal wins on conflict) and an explicit known-ours override list (`CCAZ`/`CCAZR` = Common Cause Arizona, mis-flagged external upstream; that table is not writable from this project).
+
+`mobilize_external_removal` is the one-shot cleanup of already-loaded people who now fail these rules — scoped to those with a current in-window Mobilize signup, partitioned from `ep_external_removal`, and run via `remove_mobilize_externals` (review counts first).
+
+**Removal-gap overlay.** Hard deletes are never replicated to BQ (`campaigns_entities` keeps showing removed entities — replication gap #1). So every removal feed (`dedup_candidates`, `ep_external_removal`, `mobilize_external_removal`) subtracts **`removed_campaign_entities`** — the canonical sync_log overlay of already-removed `(entity, campaign)` pairs across all removal ops (`remove_from_campaign`, `remove_ep_external`, `remove_mobilize_external`) — so a feed doesn't re-list entities that are already gone. A feed's row count therefore reflects entities still needing removal, not all-time matches. (When adding a new removal op, add its operation string to `removed_campaign_entities.sql`.)
 
 #### `test_campaign_updates`
 Filtered view of `updates_needed` for the Test campaign only, with first/last name and primary email joined in for easy human identification. Use to verify what `update_records` will do on the test campaign before running live.

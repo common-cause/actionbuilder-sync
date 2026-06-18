@@ -1,40 +1,58 @@
 -- Emails of EP volunteers whose source code points to a coalition partner
--- (LWVMA, MassVOTE, ACLUM, kos, dailykos, LCR, etc.) per ep_archive.source_codes.
+-- (LWVMA, MassVOTE, ACLUM, kos, dailykos, LCR, etc.) per external_ptv_source_codes
+-- (the canonical, case-collision-robust external-code set).
 -- Anti-poaching rule: a partner-org code by itself is not enough to make
 -- someone a CC volunteer. EP shift alone, or EP-org Mobilize attendance alone,
 -- does not qualify these emails for AB load.
 WITH external_ep_emails AS (
   SELECT DISTINCT LOWER(TRIM(fa.email)) AS email_norm
   FROM ep_archive.full_archive fa
-  INNER JOIN ep_archive.source_codes sc
-    ON LOWER(fa.source_code) = LOWER(sc.source_code)
-  WHERE sc.external = 'Y'
-    AND fa.email IS NOT NULL
+  INNER JOIN {{ ref('external_ptv_source_codes') }} esc
+    ON LOWER(fa.source_code) = esc.source_code
+  WHERE fa.email IS NOT NULL
 ),
 
--- Emails with any real, non-EP engagement with a CC system in the past 5 years.
--- "Already-our-volunteer" override on the anti-poaching rule: if someone
--- partner-org-coded has independently shown up in a CC channel — a Mobilize
--- event we owned, an AN action, a NewMode submission — they're already in our
--- relationship, and EP shift adds confirmation rather than serving as the
--- decisive qualifier.
--- Election Protection-organized Mobilize events are excluded here: that's EP
--- activity in a Mobilize wrapper, not "another CC system".
--- ScaleToWin is keyed by phone, not email, so it isn't represented here;
--- that's a known small gap.
-cc_engaged_emails AS (
-  SELECT DISTINCT LOWER(TRIM(mp.user__email_address)) AS email_norm
-  FROM mobilize_cleaned.cln_mobilize__participations mp
-  WHERE mp.attended = TRUE
-    AND mp.user__email_address IS NOT NULL
-    AND COALESCE(mp.organization__name, '') != 'Election Protection'
-    AND (DATE(mp.utc_start_date)          >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 YEAR)
-         OR DATE(mp.utc_override_start_date) >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 YEAR))
+-- Emails of EP volunteers whose source code points to a CC/internal channel
+-- (i.e. NOT a coalition partner) per ep_archive.source_codes. A CC-coded PTV
+-- record is genuine CC engagement — it counts as an independent, non-Mobilize
+-- touch in the Rule A rescue set below.
+cc_coded_ep_emails AS (
+  SELECT DISTINCT LOWER(TRIM(fa.email)) AS email_norm
+  FROM ep_archive.full_archive fa
+  WHERE fa.email IS NOT NULL
+    AND fa.source_code IS NOT NULL
+    AND LOWER(fa.source_code) NOT IN (SELECT source_code FROM {{ ref('external_ptv_source_codes') }})
+),
 
-  UNION DISTINCT
+-- "Other group" PTV source codes, lowercased — used to test the Mobilize source
+-- code (referrer__utm_source). A Mobilize signup carrying one of these codes is a
+-- coalition partner's recruitment leaking through a shared Mobilize feed, not ours.
+external_source_codes AS (
+  SELECT source_code FROM {{ ref('external_ptv_source_codes') }}
+),
 
+-- Emails that are ACTIVELY subscribed to at least one CC Action Network group
+-- (subscription_statuses.status = 1). Used to discount "unsubbed AN records":
+-- an unsubscribed AN presence (status != 1) never counts as CC engagement.
+subscribed_an_emails AS (
+  SELECT DISTINCT LOWER(TRIM(REGEXP_REPLACE(u.email, r'^"(.*)"$', r'\1'))) AS email_norm
+  FROM actionnetwork_cleaned.cln_actionnetwork__users u
+  INNER JOIN actionnetwork_cleaned.cln_actionnetwork__subscription_statuses ss
+    ON ss.subscriber_id = u.id
+  WHERE ss.status = 1
+    AND u.email IS NOT NULL
+),
+
+-- Independent, NON-Mobilize CC engagement in the past 5 years (plus all-time
+-- Soapboxx, a recent platform). The AN branch is gated on subscribed_an_emails so
+-- an unsubscribed AN record does not count. Mobilize is deliberately absent: this
+-- set is reused as the Rule A rescue, where a Mobilize candidate must not rescue
+-- itself with the very Mobilize appearance under scrutiny.
+non_mobilize_online_touch AS (
   SELECT DISTINCT LOWER(TRIM(REGEXP_REPLACE(ana.email, r'^"(.*)"$', r'\1'))) AS email_norm
   FROM {{ ref('action_network_actions') }} ana
+  INNER JOIN subscribed_an_emails sae
+    ON LOWER(TRIM(REGEXP_REPLACE(ana.email, r'^"(.*)"$', r'\1'))) = sae.email_norm
   WHERE ana.email IS NOT NULL
     AND ana.actions_all_time >= 1
     AND DATE(ana.latest_action_date) >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 YEAR)
@@ -50,10 +68,56 @@ cc_engaged_emails AS (
   UNION DISTINCT
 
   -- Soapboxx is a recent platform (all data within the 5-year window); any story
-  -- is genuine CC engagement, so it counts toward the already-our-volunteer override.
+  -- is genuine CC engagement.
   SELECT DISTINCT sbx.email_normalized AS email_norm
   FROM {{ ref('soapboxx_stories') }} sbx
   WHERE sbx.email_normalized IS NOT NULL
+),
+
+-- Emails with any real, non-EP engagement with a CC system in the past 5 years.
+-- "Already-our-volunteer" override on the anti-poaching rule: if someone
+-- partner-org-coded has independently shown up in a CC channel — a Mobilize
+-- event we owned, a (subscribed) AN action, a NewMode submission, a Soapboxx
+-- story — they're already in our relationship, and EP shift adds confirmation
+-- rather than serving as the decisive qualifier.
+-- Election Protection-organized Mobilize events are excluded here: that's EP
+-- activity in a Mobilize wrapper, not "another CC system".
+-- ScaleToWin is keyed by phone, not email, so it isn't represented here;
+-- that's a known small gap.
+cc_engaged_emails AS (
+  SELECT DISTINCT LOWER(TRIM(mp.user__email_address)) AS email_norm
+  FROM mobilize_cleaned.cln_mobilize__participations mp
+  WHERE mp.attended = TRUE
+    AND mp.user__email_address IS NOT NULL
+    AND COALESCE(mp.organization__name, '') != 'Election Protection'
+    AND (DATE(mp.utc_start_date)          >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 YEAR)
+         OR DATE(mp.utc_override_start_date) >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 YEAR))
+
+  UNION DISTINCT
+
+  -- Subscribed AN / NewMode / Soapboxx (the unsubbed-AN exclusion applies here too).
+  SELECT email_norm FROM non_mobilize_online_touch
+),
+
+-- Rule A rescue set: an independent CC touch that lets a partner-org-coded person
+-- (external PTV source code) be claimed when they appear in Mobilize. Subscribed
+-- AN / NewMode / Soapboxx, or a CC-coded PTV record. Deliberately excludes Mobilize
+-- — a bare Mobilize appearance, even at a CC event, is not enough on its own.
+rule_a_rescue_emails AS (
+  SELECT email_norm FROM non_mobilize_online_touch
+  UNION DISTINCT
+  SELECT email_norm FROM cc_coded_ep_emails
+),
+
+-- Phone-keyed Rule A rescue: a ScaleToWin phone-bank shift is genuine CC
+-- engagement, but ScaleToWin has no email, so it can't live in the email-keyed
+-- rescue set. Normalized to match mobilize_qualifiers.phone_normalized.
+scaletowin_rescue_phones AS (
+  SELECT DISTINCT
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(scd.caller_phone_number, ''), r'^\+', ''), r'^1', ''), r'[^\d]', '') AS phone_norm
+  FROM {{ ref('scaletowin_call_data') }} scd
+  WHERE scd.phone_bank_calls_made > 0
+    AND scd.caller_phone_number IS NOT NULL
 ),
 
 ep_qualifiers AS (
@@ -112,13 +176,39 @@ mobilize_qualifiers AS (
   FROM mobilize_cleaned.cln_mobilize__participations mp
   LEFT JOIN external_ep_emails ext
     ON LOWER(TRIM(mp.user__email_address)) = ext.email_norm
+  -- Rule B: the Mobilize source code (referrer__utm_source) matched against
+  -- "other group" PTV source codes.
+  LEFT JOIN external_source_codes esc
+    ON LOWER(mp.referrer__utm_source) = esc.source_code
+  -- Rule A: independent non-Mobilize CC touch (email-keyed) ...
+  LEFT JOIN rule_a_rescue_emails rar
+    ON LOWER(TRIM(mp.user__email_address)) = rar.email_norm
+  -- ... and (phone-keyed) ScaleToWin shift.
+  LEFT JOIN scaletowin_rescue_phones srp
+    ON REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(mp.user__phone_number, ''), r'^\+', ''), r'^1', ''), r'[^\d]', '') = srp.phone_norm
+   AND REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(mp.user__phone_number, ''), r'^\+', ''), r'^1', ''), r'[^\d]', '') != ''
   WHERE mp.attended = True
     AND (mp.utc_start_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 365 DAY)
          OR mp.utc_override_start_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 365 DAY))
     AND mp.user__email_address IS NOT NULL
+    -- Existing: EP-org Mobilize attendance doesn't count for partner-org-coded people.
     AND NOT (
       ext.email_norm IS NOT NULL
       AND mp.organization__name = 'Election Protection'
+    )
+    -- Rule B: drop signups whose source code is an "other group" PTV code. This is
+    -- that group's recruitment through a shared Mobilize feed, not ours. OFP is exempt
+    -- — OFP attendees qualify via the separate ofp_qualifiers branch regardless.
+    AND esc.source_code IS NULL
+    -- Rule A: a partner-org-coded person (external PTV source code) is claimed via
+    -- Mobilize only if they ALSO have an independent, non-Mobilize CC touch
+    -- (subscribed AN / NewMode / Soapboxx / CC-coded PTV / ScaleToWin). A bare
+    -- Mobilize appearance — even at a CC event — isn't enough, and an unsubbed AN
+    -- record never rescues them.
+    AND NOT (
+      ext.email_norm IS NOT NULL
+      AND rar.email_norm IS NULL
+      AND srp.phone_norm IS NULL
     )
 ),
 

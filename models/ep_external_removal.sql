@@ -30,10 +30,9 @@
 WITH external_ep_emails AS (
   SELECT DISTINCT LOWER(TRIM(fa.email)) AS email_norm
   FROM ep_archive.full_archive fa
-  INNER JOIN ep_archive.source_codes sc
-    ON LOWER(fa.source_code) = LOWER(sc.source_code)
-  WHERE sc.external = 'Y'
-    AND fa.email IS NOT NULL
+  INNER JOIN {{ ref('external_ptv_source_codes') }} esc
+    ON LOWER(fa.source_code) = esc.source_code
+  WHERE fa.email IS NOT NULL
 ),
 
 ep_shifted_emails AS (
@@ -101,4 +100,11 @@ SELECT
   campaign_interact_id,
   state_abbr,
   'ep_external_winding_route' AS removal_reason
-FROM candidate_entities
+FROM candidate_entities ce
+-- Removal gap: drop entities already removed from this campaign per sync_log
+-- (BQ campaigns_entities never reflects hard deletes — replication gap #1).
+WHERE NOT EXISTS (
+  SELECT 1 FROM {{ ref('removed_campaign_entities') }} r
+  WHERE r.entity_interact_id = ce.delete_interact_id
+    AND r.campaign_interact_id = ce.campaign_interact_id
+)
