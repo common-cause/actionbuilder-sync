@@ -12,9 +12,10 @@
 
 set -eo pipefail
 
-# Pin dbt to the version used locally (dbt-core 1.11.x). Bump deliberately when upgrading,
-# mirroring the ccef-connections pin in the other civis scripts.
-pip install "dbt-bigquery==1.11.0" "python-dotenv>=1.0"
+# Pin to the EXACT versions confirmed locally (dbt-core 1.11.6 + dbt-bigquery 1.11.0). Pinning
+# only dbt-bigquery let pip float dbt-core to a newer 1.11.x that escalated a deprecated test
+# arg to a hard error (dbt1159) — so Civis diverged from local. Pin both; bump deliberately.
+pip install "dbt-core==1.11.6" "dbt-bigquery==1.11.0" "python-dotenv>=1.0"
 
 # run_dbt.py loads BIGQUERY_CREDENTIALS_PASSWORD (a Civis job env var here; .env locally),
 # writes it to a temp keyfile, and runs dbt with the project's profiles.yml. Builds every model.

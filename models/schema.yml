@@ -322,7 +322,8 @@ models:
         description: Which dedup logic identified this pair.
         tests:
           - accepted_values:
-              values: ['person_id_match', 'name_email_match', 'test_account', 'voterbase_id_match', 'resolved_merge']
+              arguments:
+                values: ['person_id_match', 'name_email_match', 'test_account', 'voterbase_id_match', 'resolved_merge']
       - name: delete_reason
         description: Human-readable explanation of why this entity is being deleted.
       - name: delete_tag_count
