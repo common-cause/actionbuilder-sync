@@ -435,12 +435,15 @@ def _build_person_data(row: Dict[str, Any]) -> Dict[str, Any]:
         person_data['phone_numbers'] = [
             {'number': row['phone_number'], 'primary': True}
         ]
-    postal: Dict[str, str] = {'country': 'US'}
+    # AB rejects an address with a blank state (422 "Addresses state can't be blank"), so only
+    # attach postal_addresses when we have a state (region). Stateless OFP attendees (no Mobilize
+    # zip) are inserted with no address. insert_new_records rows always carry a state (state-campaign
+    # routing), so this only affects insert_organizing_team's no-state people.
     if row.get('state'):
-        postal['region'] = row['state']
-    if row.get('zip_code'):
-        postal['postal_code'] = str(row['zip_code'])
-    person_data['postal_addresses'] = [postal]
+        postal: Dict[str, str] = {'country': 'US', 'region': row['state']}
+        if row.get('zip_code'):
+            postal['postal_code'] = str(row['zip_code'])
+        person_data['postal_addresses'] = [postal]
     return person_data
 
 
