@@ -12,3 +12,34 @@ seeds:
         description: Full state name (e.g. "Michigan") — matches cln_actionnetwork__core_fields.state.
       - name: min_an_actions_6m
         description: Minimum 6-month AN actions required to qualify for AB inclusion.
+
+  - name: organizer_state_map
+    description: >
+      Maps each of the 24 staffed states to the C&O National Organizing Team
+      organizer who covers it. Drives organizing_team_assignments: a campaign-26
+      member's zip-derived state (ofp_universe.state) routes them to their
+      organizer's entity, which the assign_organizers sync op wires up as a
+      People:People connection tagged "Regional Organizer".
+
+      Source of the coverage split: KL entry
+      state-leads-and-organizers-ep-contact-directory ("C&O National Organizing
+      Team — State Coverage", confirmed 2026-06-18). Only the 24 staffed states
+      are mapped; members whose state is unstaffed or unknown are intentionally
+      left unassigned in v1 (they simply don't join this seed).
+    columns:
+      - name: state
+        description: Two-letter state abbreviation — matches ofp_universe.state (zip-derived, vb_tsmart_state).
+        tests:
+          - not_null
+          - unique
+      - name: organizer_name
+        description: The organizer's display name (for readability/debugging).
+      - name: organizer_email
+        description: The organizer's Common Cause email (cross-reference only; not used by the model).
+      - name: organizer_interact_id
+        description: >
+          The 36-char interact_id of the organizer's ActionBuilder entity — the
+          connected_person_id passed to create_connection. All four organizers
+          must be members of campaign 26 for the connection to succeed.
+        tests:
+          - not_null

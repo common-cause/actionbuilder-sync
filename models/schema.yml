@@ -762,3 +762,45 @@ models:
           - not_null
       - name: qualification_reason
         description: Human-readable string describing the most specific criterion that triggered this level.
+
+  # ── Organizing Team (campaign 26) ─────────────────────────────────────────────
+
+  - name: organizing_team_assignments
+    description: >
+      Routes each Organizing Team (campaign 26) member to the C&O National
+      Organizing Team organizer covering their state. Feeds the assign_organizers
+      sync op, which creates a People:People AB connection (member -> organizer)
+      tagged "Regional Organizer".
+
+      Member state is zip-derived via ofp_universe; the organizer_state_map seed
+      maps state -> organizer interact_id. Members are drawn from the BQ
+      campaigns_entities snapshot UNION the sync_log connect_entity overlay, and
+      already-assigned members are excluded via sync_log create_connection rows.
+      Only the 24 staffed states are routed (v1); unstaffed/unknown-state members
+      are intentionally left unassigned.
+    columns:
+      - name: campaign_interact_id
+        description: Always the Organizing Team campaign UUID (1e7e58fd-...). Passed to create_connection.
+        tests:
+          - not_null
+      - name: member_interact_id
+        description: >
+          The 36-char interact_id of the member entity — the create_connection
+          person_id (whose /connections endpoint receives the POST).
+        tests:
+          - not_null
+          - unique
+      - name: organizer_interact_id
+        description: >
+          The 36-char interact_id of the assigned organizer's entity — the
+          create_connection connected_person_id.
+        tests:
+          - not_null
+      - name: organizer_name
+        description: The assigned organizer's display name (for logging/readability).
+      - name: state
+        description: Two-letter state that routed this member (from ofp_universe / organizer_state_map).
+      - name: sync_string
+        description: >
+          The connection info tag as a standard sync string
+          ("Organizer Relationships:|:Assigned Organizer:|:Regional Organizer:|:standard_response:Regional Organizer").

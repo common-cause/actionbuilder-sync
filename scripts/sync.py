@@ -1815,6 +1815,134 @@ def insert_organizing_team(
     logger.info(f'insert_organizing_team: done. ok={n_ok} err={n_err}')
 
 
+def assign_organizers(
+    bq: BigQueryConnector,
+    ab: Optional[ActionBuilderConnector],
+    campaign_filter: Optional[str],
+    dry_run: bool,
+    limit: Optional[int],
+    sync_logger: Optional[SyncLogger] = None,
+    delay: float = 0.0,
+    organizer_filter: Optional[str] = None,
+) -> None:
+    """
+    Wire each Organizing Team member to their assigned C&O regional organizer via
+    a People:People ActionBuilder connection, tagged "Regional Organizer".
+
+    organizer_filter (optional): comma-separated organizer interact_ids or
+    case-insensitive name substrings. When set, only members routed to a matching
+    organizer are processed — used for staged rollout (e.g. skip an organizer who
+    is not yet a member of campaign 26) or to re-run a single organizer's members.
+
+    Reads actionbuilder_sync.organizing_team_assignments (one row per member,
+    routed to an organizer by zip-derived state). For each row, calls
+    ab.create_connection(campaign, member, organizer, add_tags), which POSTs to
+    the member's /connections endpoint with the organizer as the connected person
+    and the "Assigned Organizer" info tag. AB infers the connection type from the
+    entity-type pair (Person + Person), so no connection_type is sent.
+
+    create_connection is idempotent — an existing connection is updated, not
+    duplicated. Logs create_connection to sync_log with entity_interact_id = member
+    and value_written = organizer interact_id, so the feed skips already-assigned
+    members on the next run (covers BQ replication lag). The connection tag is NOT
+    logged as add_tagging — it lives on the connection resource, not the entity's
+    taggable_logbook, and must not pollute current_tag_values / removal logic.
+
+    PREREQUISITE: all four organizer entities must be members of campaign 26 (both
+    ends of a connection must belong to the campaign). Carlos Childs already is;
+    Luana Chaires / Rommel Sandino / Lamair Bryan must be connected to 26 first.
+    """
+    logger.info('assign_organizers: fetching rows...')
+
+    sql = f'SELECT * FROM `{BQ_PROJECT}.{BQ_DATASET}.organizing_team_assignments`'
+    if limit:
+        sql += f' LIMIT {limit}'
+    rows = _query(bq, sql)
+
+    if not rows:
+        logger.info('assign_organizers: no rows to process')
+        return
+
+    organizer_tokens: Optional[set] = None
+    if organizer_filter:
+        organizer_tokens = {
+            t.strip().lower() for t in organizer_filter.split(',') if t.strip()
+        }
+        logger.info(
+            f'assign_organizers: organizer filter active -> {sorted(organizer_tokens)}'
+        )
+
+    logger.info(f'assign_organizers: {len(rows)} member(s) in feed')
+    n_ok = n_err = n_skip = 0
+
+    for row in rows:
+        campaign_id = str(row['campaign_interact_id'])
+        if campaign_filter and campaign_id != campaign_filter:
+            continue
+        member = str(row['member_interact_id'])
+        organizer = str(row['organizer_interact_id'])
+        organizer_name = row.get('organizer_name')
+
+        if organizer_tokens is not None:
+            oname = (organizer_name or '').lower()
+            if organizer.lower() not in organizer_tokens and not any(
+                t in oname for t in organizer_tokens
+            ):
+                n_skip += 1
+                continue
+
+        add_tags: List[Dict[str, Any]] = []
+        val = row.get('sync_string')
+        if val:
+            try:
+                add_tags.append(parse_sync_string(str(val)))
+            except ValueError as e:
+                logger.warning(f'  Skipping malformed sync string: {e}')
+
+        label = (
+            f'member={member[:8]}... -> {organizer_name} '
+            f'organizer={organizer[:8]}...'
+        )
+
+        if dry_run:
+            logger.info(
+                f'  [DRY-RUN] Would connect {label} with {len(add_tags)} tag(s)'
+            )
+            n_ok += 1
+            continue
+
+        try:
+            ab.create_connection(campaign_id, member, organizer, add_tags or None)
+            n_ok += 1
+            if sync_logger:
+                sync_logger.log(
+                    operation='create_connection',
+                    entity_interact_id=member,
+                    campaign_interact_id=campaign_id,
+                    status='ok',
+                    tag_name='Assigned Organizer',
+                    value_written=organizer,
+                )
+        except Exception as e:
+            logger.error(f'  ERROR connecting {label}: {e}')
+            n_err += 1
+            if sync_logger:
+                sync_logger.log(
+                    operation='create_connection',
+                    entity_interact_id=member,
+                    campaign_interact_id=campaign_id,
+                    status='error',
+                    tag_name='Assigned Organizer',
+                    value_written=organizer,
+                    error_detail=str(e)[:500],
+                )
+
+        if delay:
+            time.sleep(delay)
+
+    logger.info(f'assign_organizers: done. ok={n_ok} err={n_err} skipped={n_skip}')
+
+
 OPERATIONS = {
     'update_records': update_records,
     'insert_new_records': insert_new_records,
@@ -1829,6 +1957,7 @@ OPERATIONS = {
     'snapshot_tag_state': snapshot_tag_state,
     'connect_entities': connect_entities,
     'insert_organizing_team': insert_organizing_team,
+    'assign_organizers': assign_organizers,
 }
 
 
@@ -1871,6 +2000,15 @@ def main() -> None:
         metavar='SECONDS',
         help='Seconds to sleep between API calls (default 0). Use 0.3 on Civis to avoid rate limits.',
     )
+    parser.add_argument(
+        '--organizer',
+        metavar='NAMES',
+        help=(
+            'assign_organizers only: comma-separated organizer interact_ids or '
+            'name substrings to include; members routed to other organizers are '
+            'skipped. Use for staged rollout or re-running one organizer.'
+        ),
+    )
     args = parser.parse_args()
 
     # Resolve state name aliases for --campaign
@@ -1901,10 +2039,12 @@ def main() -> None:
 
     op_fn = OPERATIONS[args.operation]
     kwargs: Dict[str, Any] = {}
-    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'prepare_email_data', 'prepare_phone_data', 'backfill_region', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes', 'connect_entities', 'insert_organizing_team'):
+    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'prepare_email_data', 'prepare_phone_data', 'backfill_region', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes', 'connect_entities', 'insert_organizing_team', 'assign_organizers'):
         kwargs['delay'] = args.delay
-    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'backfill_region', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes', 'connect_entities', 'insert_organizing_team'):
+    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'backfill_region', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes', 'connect_entities', 'insert_organizing_team', 'assign_organizers'):
         kwargs['sync_logger'] = sync_logger
+    if args.operation == 'assign_organizers':
+        kwargs['organizer_filter'] = args.organizer
     op_fn(bq, ab, campaign_filter, args.dry_run, args.limit, **kwargs)
 
     # Flush any remaining buffered log rows
