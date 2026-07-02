@@ -1,6 +1,6 @@
 # Scheduled Scripts — ActionBuilder Sync
 
-*Last verified: 2026-06-16*
+*Last verified: 2026-07-02*
 
 ## Job Setup (all scripts)
 
@@ -29,8 +29,8 @@ picked up by any step that hasn't started yet (and by every step on the next run
 - **Civis name:** Nightly ActionBuilder Update — [workflow #119217](https://platform.civisanalytics.com/spa/#/workflows/119217)
 - **Schedule:** Daily at 10:00 PM ET
 - **Typical runtime:** 1.5–4 hours (observed)
-- **Steps:** insert_new_records.sh → update_records.sh → apply_assessments.sh → append_notes.sh → connect_entities.sh → insert_organizing_team.sh
-- Step names in Civis: AB Inserts / AB Tag Updates / AB Assessment Setting / AB Notes Append / AB Organizing Team Connect / AB Organizing Team Inserts (sequential)
+- **Steps:** insert_new_records.sh → update_records.sh → apply_assessments.sh → append_notes.sh → connect_entities.sh → insert_organizing_team.sh → assign_organizers.sh
+- Step names in Civis: AB Inserts / AB Tag Updates / AB Assessment Setting / AB Notes Append / AB Organizing Team Connect / AB Organizing Team Inserts / AB Organizing Team Assign Organizers (sequential)
 - **Pending step 0 — `run_dbt.sh`:** a `dbt run` to prepend before AB Inserts. The script is committed and ready but is **NOT yet added to the workflow** — add it as the first step via the Civis UI. Required before any model is materialized as a table (a table goes stale without a nightly dbt run); harmless (just recreates views) until then. See Scripts below.
 
 ## Scripts
@@ -82,6 +82,14 @@ picked up by any step that hasn't started yet (and by every step on the next run
 - **APIs:** ActionBuilder API (~4 req/sec, throttled 0.3s), BigQuery (read + sync_log write)
 - **Input view:** `actionbuilder_sync.organizing_team_inserts`
 - **Description:** Inserts OFP attendees who are not in AB and have no state-load path directly into the Organizing Team campaign (id 26), with only the universal OFP competencies set. "No state-load path" = neither zip-derived nor voter-file state is a staffed campaign (direct check). Insert guards: first_name NOT NULL, gmail plus-alias filter; excludes anyone already in AB. **Note (2026-06-18):** previously anti-joined `deduplicated_names_to_load`, which inlined the whole `master_load_qualifiers` tree and exceeded BigQuery's query planner — the step errored silently every run (0 inserts). Replaced with the direct staffed-state check (verified equivalent, no double-insert risk).
+
+### assign_organizers.sh — AB Organizing Team Assign Organizers
+- **Type:** Scheduled (via Nightly ActionBuilder Update, step 7)
+- **Civis script:** TBD — create a GitHub-backed container script (body `bash app/civis/assign_organizers.sh`) and add it as step 7, after AB Organizing Team Inserts.
+- **APIs:** ActionBuilder API (~4 req/sec, throttled 0.3s), BigQuery (read + sync_log write)
+- **Input view:** `actionbuilder_sync.organizing_team_assignments`
+- **Description:** Wires each Organizing Team (campaign 26) member to the C&O National Organizing Team organizer who covers their zip-derived state, as a People:People AB connection tagged "Regional Organizer" (section `Organizer Relationships`, field `Assigned Organizer`), via `ab.create_connection`. The connection *is* the assignment; the tag just labels it. Idempotent via sync_log `create_connection` rows (skips already-assigned members, covering BQ replication lag). Routes the 24 staffed states only (`organizer_state_map` seed); unstaffed/no-zip-state members are intentionally left unassigned.
+- **⚠️ Temporary `--organizer "Carlos,Luana,Rommel"` filter:** Lamair Bryan has no AB account yet, so his members (CA/HI/MA/MI/NC) are held back to avoid nightly 404s. **When his entity exists and is connected to campaign 26, remove the `--organizer` flag** from `assign_organizers.sh` so all four organizers (and future new members in his states) are assigned. Prereq for any organizer: both ends of a connection must be members of campaign 26 — connect via `update_entity_with_tags(26, interact_id, [])`, NOT the AB UI (the UI add was observed not to persist, 2026-07-02).
 
 ## On-Demand Scripts
 
