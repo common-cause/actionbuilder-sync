@@ -1,0 +1,42 @@
+version: '2.0'
+workflow:
+  tasks:
+    run_dbt:
+      action: civis.run_job
+      input:
+        job_id: 358132951
+      on-success: AB_Inserts
+    AB_Inserts:
+      action: civis.run_job
+      input:
+        job_id: 345082775
+      on-success: AB_Updates
+    AB_Updates:
+      action: civis.run_job
+      input:
+        job_id: 346138397
+      on-success: AB_Assessments
+    AB_Assessments:
+      action: civis.run_job
+      input:
+        job_id: 346528478
+      on-complete: AB_Notes
+    AB_Notes:
+      action: civis.run_job
+      input:
+        job_id: 348368977
+      on-complete: AB_Organizing_Team_Connect
+    AB_Organizing_Team_Connect:
+      action: civis.run_job
+      input:
+        job_id: 357827345
+      on-complete: AB_Organizing_Team_Inserts
+    AB_Organizing_Team_Inserts:
+      action: civis.run_job
+      input:
+        job_id: 357827433
+      on-complete: AB_Assign_Organizers
+    AB_Assign_Organizers:
+      action: civis.run_job
+      input:
+        job_id: 360156836
