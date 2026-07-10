@@ -4,7 +4,7 @@
 
 This project calculates participation values for people in ActionBuilder from external platforms (Mobilize, Action Network, ScaleToWin, EP Archive) and pushes those values into ActionBuilder as tag responses via a custom sync job. It runs entirely in BigQuery as a set of dbt views.
 
-**Current status (2026-06-16):** Nightly maintenance runs on Civis at 10 PM ET (workflow #119217): `insert_new_records` → `update_records` → `apply_assessments` → `append_notes` → `connect_entities` → `insert_organizing_team` across all 24 state campaigns (22 original + VA + DC) plus the crosscutting **Organizing Team** campaign (id 26). Dedup completed March 2026. Platforms feeding tags: Mobilize, Action Network (incl. state actions), ScaleToWin, NewMode, EP Archive, OFP training. The OFP "Organizing For Power" field is now a **universal** field (section `Trainings`) — one network-level tag object shared across all campaigns. OFP attendance is also a load qualifier. 1 Million Conversations (1MC) role/conversation/notes models are rolling out (see `MEMORY.md` → 1MC roadmap).
+**Current status (2026-07-03):** Nightly maintenance runs on Civis at 10 PM ET (workflow #119217), 8 steps: `run_dbt` → `insert_new_records` → `update_records` → `apply_assessments` → `append_notes` → `connect_entities` → `insert_organizing_team` → `assign_organizers`, across all 24 state campaigns (22 original + VA + DC) plus the crosscutting **Organizing Team** campaign (id 26). (`run_dbt` must stay first: `master_load_qualifiers` and `dedup_ambiguous` are table-materialized, so they're only as fresh as the last dbt run.) See `civis/SCHEDULED_SCRIPTS.md` for job IDs and per-step detail. Dedup completed March 2026. Platforms feeding tags: Mobilize, Action Network (incl. state actions), ScaleToWin, NewMode, Soapboxx, EP Archive, OFP training. The OFP "Organizing For Power" field is now a **universal** field (section `Trainings`) — one network-level tag object shared across all campaigns. OFP attendance is also a load qualifier. 1 Million Conversations (1MC) role/conversation/notes models are rolling out (see `MEMORY.md` → 1MC roadmap).
 
 ---
 
@@ -25,6 +25,10 @@ The sync job is `scripts/sync.py` in this repository. It replaces the original T
 | `insert_new_records` | `deduplicated_names_to_load` | Create new entities — **nightly** |
 | `apply_assessments` | `auto_assessment_rules` | Set assessment levels (upgrade-only) — **nightly** |
 | `append_notes` | `1mc_notes` | Append 1MC conversation notes to entities — **nightly** |
+| `connect_entities` | `organizing_team_connects` | Connect OFP attendees' existing AB entities to campaign 26 + stamp universal OFP — **nightly** |
+| `insert_organizing_team` | `organizing_team_inserts` | Insert stateless OFP attendees directly into campaign 26 — **nightly** |
+| `assign_organizers` | `organizing_team_assignments` | Wire campaign-26 members to their regional organizer via People:People connections — **nightly** |
+| `backfill_region` | `organizing_team_region_backfill` | Set address.state on campaign-26 entities missing it — **on-demand** |
 | `snapshot_tag_state` | (API-driven) | Capture tag ground truth from AB API into sync_log — **on-demand** |
 | `remove_records` | `dedup_candidates` | Remove duplicate entities from campaigns — **one-time, completed** |
 | `remove_ep_externals` | `ep_external_removal` | Remove partner-org EP volunteers loaded via the old EP-shift path — **one-shot** |
@@ -181,6 +185,15 @@ Pre-deletion contact migration feeds. For each duplicate pair in `dedup_candidat
 #### `master_load_qualifiers` + `deduplicated_names_to_load`
 New record insertion infrastructure. Identifies people from external platforms who qualify to be added to ActionBuilder but don't yet have a record. `deduplicated_names_to_load` applies full AB exclusion and within-feed dedup. Runs nightly via `insert_new_records`. Filters out records with NULL first_name (AB API requires it).
 
+**EP shift cycles (2022, 2024, 2026).** People who worked Election Protection shifts qualify for load. Each cycle has its own source and its own qualifier branch (all reason-tagged `EP Shift <year>`), because there is no single cross-year "shifted" flag:
+- **2024** (`ep_qualifiers`) — `ep_archive.ep_internal` where `shifted_2024 = 'Y'`.
+- **2022** (`ep_2022_qualifiers`) — distinct volunteers who booked a shift in `ep_2023.shifting_tool_shifts` (presence = "actually shifted"), enriched from `ep_archive.full_archive` (100% email coverage) for name/phone/geo.
+- **2026** (`ep_2026_qualifiers`) — person-level rollup of the live `ptv_raw_2026.shift_volunteers` feed (the same shift data `ep-syncs` pushes to per-state Airtable bases).
+- **2025 is out of scope** — no EP shift program / data located (2026-07-10).
+- All three route to state campaigns by 2-letter `state` and get EP-priority in the contact/geo rollup (`qualification_reason LIKE 'EP Shift %'`).
+
+**`previous_years` provenance & source resolution.** `ep_archive.source_codes` mis-flags several non-org **provenance/platform** markers as `external='Y'` — chiefly `previous_years` (36k records, CC's own prior-year roster carryover), plus `actionnetwork`, `vf`, `youth`. Left alone these would poach-exclude ~half of real CC shifters (e.g. 785 of the 1,855 2022 shift-workers). For the 2022/2026 branches only, these are excluded from the partner set (`external_ptv_codes_strict` / `external_ep_emails_strict`) so the anti-poaching call keys on **genuine** partner codes across a person's full archive history — internal unless they carry a real coalition-partner code. `ep_resolved_source` additionally re-stamps each record's `source_code` with the best real historical code in place of `previous_years` (informational only — `source_code` is not written to AB). Scoped to these branches by decision 2026-07-10; the shared `external_ptv_source_codes` model and the live 2024 load / removal feeds are left as-is.
+
 **Anti-poaching (other groups' EP volunteers).** The Mobilize qualifier is gated so we don't claim other coalition groups' Election Protection volunteers who surface in our shared Mobilize feeds:
 - **Rule A** — a person whose PTV record is under another group's source code (`ep_archive.source_codes.external = 'Y'`, captured by `external_ep_emails`) loads via Mobilize only if they ALSO have an independent, *non-Mobilize* CC touch: a *subscribed* AN action, a NewMode submission, a Soapboxx story, a ScaleToWin shift, or a CC-coded PTV record (`rule_a_rescue_emails` / `scaletowin_rescue_phones`). An **unsubscribed** AN record never counts.
 - **Rule B** — a Mobilize signup whose `referrer__utm_source` matches an external PTV source code (`external_source_codes`) does not qualify the person.
@@ -220,7 +233,7 @@ Section is `Participation` for every field except Hot Prospect (`Engagement`) an
 | OFP competencies: Organizing Basics, **Storytelling**, Relational Organizing, Rapid Response Basics | Organizing For Power *(Section: **Trainings** — universal)* | standard (additive multi-select) | `ofp_attendance` (Mobilize event 907019) | `ofp_tag` |
 
 **Notes:**
-- **`current_tag_values` is an overlay model:** it merges `sync_log` tag operations on top of the (sometimes stale) BQ snapshot of `taggable_logbook`, so the "what is currently in AB" side reflects recent sync runs and covers the hard-delete replication gap. A `_bq_only` twin preserves the original snapshot-only logic. See `CLAUDE.md` → "Sync Log Architecture".
+- **`current_tag_values` is an overlay model:** it merges `sync_log` tag operations on top of the (sometimes stale) BQ snapshot of `taggable_logbook`, so the "what is currently in AB" side reflects recent sync runs and covers the hard-delete replication gap. A `_bq_only` twin preserves the original snapshot-only logic. See `MEMORY.md` → "Sync log architecture" (`sync_log_plan`).
 - **Name-collision warning:** "**Storytelling**" already exists as an OFP training competency tag (above). A Soapboxx storytelling tag must use a distinct name (e.g. "Soapboxx Stories").
 - **1MC (in progress):** `updates_needed` also emits `million_conversations_*` columns (roles, total conversations, prospects) from the `1mc_*` models, and `append_notes` writes 1MC notes from `1mc_notes`. The tag columns are not yet in `sync.py` `TAG_COLS` (rollout pending).
 
@@ -241,8 +254,11 @@ A crosscutting (non-state) campaign for the organizing team to recruit OFP train
 | `organizing_team_connects` | OFP attendees already in AB (state-campaign entity; pick-one = most-recently-updated; Test/26 excluded; already-in-26 filtered via `campaigns_entities` + `sync_log connect_entity`) | `connect_entities` (`update_entity_with_tags` → connect + stamp) | Connect entity to 26 + universal OFP |
 | `organizing_team_inserts` | OFP attendees not in AB **and** with no state-load path (no zip / zip in an unstaffed state); guards mirror `deduplicated_names_to_load` | `insert_organizing_team` (`insert_entity`, universal OFP only) | New entity in 26 |
 | `organizing_team_review` | OFP attendees in AB but only in non-state campaigns (e.g. Test) — can neither connect nor insert | — (manual) | Surface for one-time manual state insert |
+| `organizing_team_assignments` | Campaign-26 members not yet connected to the organizer covering their zip-derived state (`organizer_state_map` seed; sync_log `create_connection` filter) | `assign_organizers` (`ab.create_connection`) | People:People connection tagged "Regional Organizer" (section `Organizer Relationships`, field `Assigned Organizer`) |
 
 Staffed-state attendees not yet in AB are loaded into their state campaign first, then connected to 26 once replicated (bounded 1–2 night lag).
+
+**Organizer assignment.** Each Organizing Team member is wired to the C&O organizer who covers their state so organizers can find *their own people* via AB connections. The connection **is** the assignment; the tag just labels it. Both ends must be members of campaign 26 — connect an organizer via `update_entity_with_tags(26, interact_id, [])`, **not** the AB UI (a UI add was observed not to persist, 2026-07-02). Initial load 2026-07-02: 281 connections (Carlos 41, Luana 99, Rommel 141). A temporary `--organizer "Carlos,Luana,Rommel"` filter in `civis/assign_organizers.sh` holds back Lamair Bryan's 141 members (CA/HI/MA/MI/NC) until his AB account exists — remove the flag then.
 
 ---
 

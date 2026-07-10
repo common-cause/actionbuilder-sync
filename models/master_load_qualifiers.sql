@@ -345,9 +345,214 @@ ofp_qualifiers AS (
   FROM {{ ref('ofp_universe') }}
 ),
 
+-- ============================================================
+-- Additional EP shift cycles: 2022 and 2026.
+-- The 2024 branch (ep_qualifiers) reads the purpose-built ep_internal.shifted_2024
+-- flag. Those cycles have no equivalent flag, so each is derived from its own
+-- shifting-tool feed and enriched/gated for parity with 2024. 2025 is intentionally
+-- out of scope (no EP shift program / data located as of 2026-07-10).
+-- ============================================================
+
+-- Non-org provenance / platform markers that are mis-flagged external='Y' in the
+-- hand-maintained ep_archive.source_codes, and therefore leak into the shared
+-- external_ptv_source_codes set. They are NOT coalition partners, so treating them
+-- as "poaching" wrongly suppresses real CC volunteers:
+--   previous_years — carried over from CC's own prior-year EP roster (largest code)
+--   actionnetwork  — the Action Network platform, not an organization
+--   vf             — voter-file provenance
+--   youth          — youth-program provenance
+-- Per decision 2026-07-10 this override is scoped to the 2022 & 2026 branches ONLY;
+-- the shared model and the live 2024 load / ep_/mobilize_external_removal feeds are
+-- deliberately left as-is. Fold these into external_ptv_source_codes if the call is
+-- ever made to correct the gate globally.
+provenance_override_codes AS (
+  SELECT code FROM UNNEST(['previous_years', 'actionnetwork', 'vf', 'youth']) AS code
+),
+
+-- The canonical external set minus the provenance overrides above.
+external_ptv_codes_strict AS (
+  SELECT source_code
+  FROM {{ ref('external_ptv_source_codes') }}
+  WHERE source_code NOT IN (SELECT code FROM provenance_override_codes)
+),
+
+-- Emails whose EP archive source code is a genuine coalition partner (provenance
+-- markers excluded). Parallel to external_ep_emails but strict; used to anti-poach
+-- the 2022 & 2026 branches.
+external_ep_emails_strict AS (
+  SELECT DISTINCT LOWER(TRIM(fa.email)) AS email_norm
+  FROM ep_archive.full_archive fa
+  INNER JOIN external_ptv_codes_strict esc
+    ON LOWER(fa.source_code) = esc.source_code
+  WHERE fa.email IS NOT NULL
+),
+
+-- One row per email from the EP archive (all cycles), used to enrich 2022 shift
+-- workers (who arrive with only an email) with name / phone / geo / source code.
+-- Prefer a complete, most-recent record.
+ep_full_archive_dedup AS (
+  SELECT
+    email_norm, first_name, last_name, phone_number, email,
+    state, county, zip_code, source_code, created_at
+  FROM (
+    SELECT
+      LOWER(TRIM(email)) AS email_norm,
+      first_name, last_name, phone_number, email,
+      state, county, zip_code, source_code, created_at,
+      ROW_NUMBER() OVER (
+        PARTITION BY LOWER(TRIM(email))
+        ORDER BY
+          CASE WHEN first_name IS NOT NULL AND last_name IS NOT NULL THEN 0 ELSE 1 END,
+          created_at DESC
+      ) AS rn
+    FROM ep_archive.full_archive
+    WHERE email IS NOT NULL
+  )
+  WHERE rn = 1
+),
+
+-- Resolved "real" source per email: the historical data's answer to the vague
+-- `previous_years` stamp. Prefer a genuine (non-provenance) source code over the
+-- provenance markers, most-recent first; fall back to whatever exists. This is a
+-- core reason the EP archive/legacy data was loaded — recovering the true origin for
+-- people the feed only marked `previous_years`. NOTE: source_code is carried through
+-- the load feed but is NOT written to ActionBuilder, so this is informational; the
+-- external/internal gate itself already resolves via external_ep_emails_strict
+-- (which ignores the provenance markers and keys on genuine partner codes).
+ep_resolved_source AS (
+  SELECT email_norm, source_code AS resolved_source_code
+  FROM (
+    SELECT
+      LOWER(TRIM(email)) AS email_norm,
+      source_code,
+      ROW_NUMBER() OVER (
+        PARTITION BY LOWER(TRIM(email))
+        ORDER BY
+          CASE WHEN LOWER(source_code) IN (SELECT code FROM provenance_override_codes) THEN 1 ELSE 0 END,
+          created_at DESC
+      ) AS rn
+    FROM ep_archive.full_archive
+    WHERE email IS NOT NULL AND source_code IS NOT NULL
+  )
+  WHERE rn = 1
+),
+
+-- Distinct volunteers who booked an EP shift in the 2022 cycle (one row per
+-- volunteer-shift signup in the shifting tool). Presence here = "actually shifted",
+-- matching the strictness of shifted_2024='Y'.
+ep_2022_shift_vols AS (
+  SELECT
+    LOWER(TRIM(volunteer_email)) AS email_norm,
+    ANY_VALUE(volunteer_email)   AS email_raw
+  FROM ep_2023.shifting_tool_shifts
+  WHERE volunteer_email IS NOT NULL
+    AND volunteer_email LIKE '%@%'
+  GROUP BY LOWER(TRIM(volunteer_email))
+),
+
+ep_2022_qualifiers AS (
+  -- 2022 EP shift workers, enriched from the archive and gated exactly like the 2024
+  -- branch: a partner-org-coded email (external_ep_emails_strict) is admitted only if
+  -- it also has an independent CC touch (cc_engaged_emails).
+  SELECT
+    fa.first_name,
+    fa.last_name,
+    fa.phone_number,
+    COALESCE(fa.email, sv.email_raw) AS email,
+    fa.state,
+    fa.county,
+    fa.zip_code,
+    COALESCE(rs.resolved_source_code, fa.source_code) as source_code,
+    fa.created_at,
+    CAST(NULL AS STRING) as shifted_2024,
+    CAST(NULL AS INT64)  as events_6m,
+    CAST(NULL AS INT64)  as phone_bank_dials,
+    'EP Shift 2022' as qualification_reason,
+    sv.email_norm as email_normalized,
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(fa.phone_number, ''), r'^\+', ''), r'^1', ''), r'[^\d]', '') as phone_normalized
+  FROM ep_2022_shift_vols sv
+  LEFT JOIN ep_full_archive_dedup fa
+    ON sv.email_norm = fa.email_norm
+  LEFT JOIN ep_resolved_source rs
+    ON sv.email_norm = rs.email_norm
+  LEFT JOIN external_ep_emails_strict ext
+    ON sv.email_norm = ext.email_norm
+  LEFT JOIN cc_engaged_emails cce
+    ON sv.email_norm = cce.email_norm
+  WHERE (ext.email_norm IS NULL OR cce.email_norm IS NOT NULL)
+),
+
+-- Person-level rollup of the live 2026 PTV shifting-tool feed. n_external / n_internal
+-- classify each person by the source codes across their shifts (provenance markers
+-- count as internal, per external_ptv_codes_strict).
+ep_2026_shift_person AS (
+  SELECT
+    LOWER(TRIM(sv.email))      AS email_norm,
+    MAX(sv.first_name)         AS first_name,
+    MAX(sv.last_name)          AS last_name,
+    MAX(sv.phone_number)       AS phone_number,
+    MAX(sv.email)              AS email,
+    MAX(sv.state)              AS state,
+    MAX(sv.county)             AS county,
+    MAX(NULLIF(sv.source, '')) AS source_code,
+    CAST(MIN(sv.date) AS TIMESTAMP) AS created_at,
+    COUNTIF(esc.source_code IS NOT NULL) AS n_external,
+    COUNTIF(sv.source IS NOT NULL AND sv.source != '' AND esc.source_code IS NULL) AS n_internal
+  FROM ptv_raw_2026.shift_volunteers sv
+  LEFT JOIN external_ptv_codes_strict esc
+    ON LOWER(sv.source) = esc.source_code
+  WHERE sv.email IS NOT NULL
+    AND sv.email LIKE '%@%'
+  GROUP BY LOWER(TRIM(sv.email))
+),
+
+ep_2026_qualifiers AS (
+  -- 2026 EP shift workers. External if every coded shift points to a partner org
+  -- (n_external>0 AND n_internal=0) OR the email is archive-external; admitted anyway
+  -- when there's an independent CC touch (cc_engaged_emails). No zip in the feed.
+  SELECT
+    pp.first_name,
+    pp.last_name,
+    pp.phone_number,
+    pp.email,
+    pp.state,
+    pp.county,
+    CAST(NULL AS STRING) as zip_code,
+    -- Keep a genuine current-cycle code; only fall back to the resolved historical
+    -- source when the 2026 feed left a provenance marker or nothing.
+    CASE
+      WHEN pp.source_code IS NULL
+        OR LOWER(pp.source_code) IN (SELECT code FROM provenance_override_codes)
+      THEN COALESCE(rs.resolved_source_code, pp.source_code)
+      ELSE pp.source_code
+    END as source_code,
+    pp.created_at,
+    CAST(NULL AS STRING) as shifted_2024,
+    CAST(NULL AS INT64)  as events_6m,
+    CAST(NULL AS INT64)  as phone_bank_dials,
+    'EP Shift 2026' as qualification_reason,
+    pp.email_norm as email_normalized,
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(pp.phone_number, ''), r'^\+', ''), r'^1', ''), r'[^\d]', '') as phone_normalized
+  FROM ep_2026_shift_person pp
+  LEFT JOIN ep_resolved_source rs
+    ON pp.email_norm = rs.email_norm
+  LEFT JOIN external_ep_emails_strict ext
+    ON pp.email_norm = ext.email_norm
+  LEFT JOIN cc_engaged_emails cce
+    ON pp.email_norm = cce.email_norm
+  WHERE (
+    NOT ((pp.n_external > 0 AND pp.n_internal = 0) OR ext.email_norm IS NOT NULL)
+    OR cce.email_norm IS NOT NULL
+  )
+),
+
 all_qualifiers AS (
   -- Combine all qualification sources
   SELECT * FROM ep_qualifiers
+  UNION ALL
+  SELECT * FROM ep_2022_qualifiers
+  UNION ALL
+  SELECT * FROM ep_2026_qualifiers
   UNION ALL
   SELECT * FROM mobilize_qualifiers
   UNION ALL
@@ -391,25 +596,25 @@ person_unified_contacts AS (
 
     -- Best contact info prioritizing completeness and EP data
     COALESCE(
-      NULLIF(MAX(CASE WHEN qualification_reason = 'EP Shift 2024' AND first_name IS NOT NULL THEN first_name END), ''),
+      NULLIF(MAX(CASE WHEN qualification_reason LIKE 'EP Shift %' AND first_name IS NOT NULL THEN first_name END), ''),
       NULLIF(MAX(CASE WHEN first_name IS NOT NULL THEN first_name END), '')
     ) as first_name,
 
     COALESCE(
-      NULLIF(MAX(CASE WHEN qualification_reason = 'EP Shift 2024' AND last_name IS NOT NULL THEN last_name END), ''),
+      NULLIF(MAX(CASE WHEN qualification_reason LIKE 'EP Shift %' AND last_name IS NOT NULL THEN last_name END), ''),
       NULLIF(MAX(CASE WHEN last_name IS NOT NULL THEN last_name END), '')
     ) as last_name,
 
     -- Best phone (EP, then ScaleToWin, then others)
     COALESCE(
-      NULLIF(MAX(CASE WHEN qualification_reason = 'EP Shift 2024' AND phone_number IS NOT NULL THEN phone_number END), ''),
+      NULLIF(MAX(CASE WHEN qualification_reason LIKE 'EP Shift %' AND phone_number IS NOT NULL THEN phone_number END), ''),
       NULLIF(MAX(CASE WHEN qualification_reason = 'ScaleToWin Phone Bank' AND phone_number IS NOT NULL THEN phone_number END), ''),
       NULLIF(MAX(CASE WHEN phone_number IS NOT NULL THEN phone_number END), '')
     ) as phone_number,
 
     -- Best email (EP, then Action Network, then Mobilize, then NewMode)
     COALESCE(
-      NULLIF(MAX(CASE WHEN qualification_reason = 'EP Shift 2024' AND email IS NOT NULL THEN email END), ''),
+      NULLIF(MAX(CASE WHEN qualification_reason LIKE 'EP Shift %' AND email IS NOT NULL THEN email END), ''),
       NULLIF(MAX(CASE WHEN qualification_reason = 'Action Network 5+ Actions' AND email IS NOT NULL THEN email END), ''),
       NULLIF(MAX(CASE WHEN qualification_reason = 'Mobilize Event Past Year' AND email IS NOT NULL THEN email END), ''),
       NULLIF(MAX(CASE WHEN qualification_reason = 'NewMode Submission' AND email IS NOT NULL THEN email END), ''),
@@ -418,18 +623,18 @@ person_unified_contacts AS (
 
     -- Geographic data (primarily from EP and Action Network)
     COALESCE(
-      NULLIF(MAX(CASE WHEN qualification_reason = 'EP Shift 2024' AND state IS NOT NULL THEN state END), ''),
+      NULLIF(MAX(CASE WHEN qualification_reason LIKE 'EP Shift %' AND state IS NOT NULL THEN state END), ''),
       NULLIF(MAX(CASE WHEN qualification_reason = 'Action Network 5+ Actions' AND state IS NOT NULL THEN state END), ''),
       NULLIF(MAX(CASE WHEN state IS NOT NULL THEN state END), '')
     ) as state,
 
     COALESCE(
-      NULLIF(MAX(CASE WHEN qualification_reason = 'EP Shift 2024' AND county IS NOT NULL THEN county END), ''),
+      NULLIF(MAX(CASE WHEN qualification_reason LIKE 'EP Shift %' AND county IS NOT NULL THEN county END), ''),
       NULLIF(MAX(CASE WHEN county IS NOT NULL THEN county END), '')
     ) as county,
 
     COALESCE(
-      NULLIF(MAX(CASE WHEN qualification_reason = 'EP Shift 2024' AND zip_code IS NOT NULL THEN zip_code END), ''),
+      NULLIF(MAX(CASE WHEN qualification_reason LIKE 'EP Shift %' AND zip_code IS NOT NULL THEN zip_code END), ''),
       NULLIF(MAX(CASE WHEN qualification_reason = 'Action Network 5+ Actions' AND zip_code IS NOT NULL THEN zip_code END), ''),
       NULLIF(MAX(CASE WHEN qualification_reason = 'Mobilize Event Past Year' AND zip_code IS NOT NULL THEN zip_code END), ''),
       NULLIF(MAX(CASE WHEN zip_code IS NOT NULL THEN zip_code END), '')
@@ -437,12 +642,12 @@ person_unified_contacts AS (
 
     -- Metadata
     COALESCE(
-      NULLIF(MAX(CASE WHEN qualification_reason = 'EP Shift 2024' AND source_code IS NOT NULL THEN source_code END), ''),
+      NULLIF(MAX(CASE WHEN qualification_reason LIKE 'EP Shift %' AND source_code IS NOT NULL THEN source_code END), ''),
       NULLIF(MAX(CASE WHEN source_code IS NOT NULL THEN source_code END), '')
     ) as source_code,
 
     COALESCE(
-      MAX(CASE WHEN qualification_reason = 'EP Shift 2024' AND created_at IS NOT NULL THEN created_at END),
+      MAX(CASE WHEN qualification_reason LIKE 'EP Shift %' AND created_at IS NOT NULL THEN created_at END),
       MAX(CASE WHEN created_at IS NOT NULL THEN created_at END)
     ) as created_at,
 
