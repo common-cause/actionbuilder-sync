@@ -1,6 +1,6 @@
 # Scheduled Scripts — ActionBuilder Sync
 
-*Last verified: 2026-07-02*
+*Last verified: 2026-07-07*
 
 ## Job Setup (all scripts)
 
@@ -60,7 +60,7 @@ picked up by any step that hasn't started yet (and by every step on the next run
 - **Civis script:** [#346528478](https://platform.civisanalytics.com/#/scripts/containers/346528478)
 - **APIs:** ActionBuilder API (~4 req/sec, throttled 0.3s), BigQuery (read)
 - **Input view:** `actionbuilder_sync.auto_assessment_rules`
-- **Description:** Sets engagement assessment levels automatically (upgrade-only). Level 1: Mobilize attendance, NewMode submission, 2+ STW calls, or 20+ AN actions in 6mo. Level 2: 2+ STW calls, 2+ virtual Mobilize, or any in-person CC Mobilize event. Level 3: 1MC Leader tag.
+- **Description:** Sets engagement assessment levels automatically (upgrade-only). Level 1: Mobilize attendance, NewMode submission, any STW call, 20+ AN actions in 6mo, or 1MC Host tag. Level 2: 2+ STW calls, 2+ virtual Mobilize, any in-person CC Mobilize event, or hosted a 1MC event. Level 3: 1MC Leader tag. Full criteria: `docs/assessment_rules.md`.
 
 ### append_notes.sh — AB Notes Append
 - **Type:** Scheduled (via Nightly ActionBuilder Update, step 4)
@@ -102,6 +102,12 @@ picked up by any step that hasn't started yet (and by every step on the next run
 - **Type:** On-demand (not in nightly workflow)
 - **APIs:** ActionBuilder API (~4 req/sec, throttled 0.3s)
 - **Description:** Removes duplicate tag values from entities across all campaigns. Calls DELETE on individual tag-entity associations. Originally a post-dedup operation; available for periodic use.
+
+### remove_ep_externals.sh
+- **Type:** On-demand (one-shot; executed 2026-06-18, not scheduled)
+- **APIs:** ActionBuilder API (~4 req/sec, throttled 0.3s), BigQuery (read + sync_log write)
+- **Input view:** `actionbuilder_sync.ep_external_removal`
+- **Description:** Removes partner-org EP volunteers who were loaded via the old EP-shift path (anti-poaching cleanup). Executed 2026-06-18 (188 removed); the feed now reads 0 via the `removed_campaign_entities` overlay. The script body defaults to `--dry-run` with the live line commented out; its header says to archive it after execution.
 
 ### remove_duplicate_entities.sh
 - **Type:** On-demand (completed March 2026, not currently scheduled)

@@ -1,7 +1,9 @@
 # Organizing Team Campaign — Build Plan
 
-**Status:** planned, not started · **Last updated:** 2026-06-12
-**Campaign:** "Organizing Team", id **26**, UUID `1e7e58fd-efb4-4810-91dc-2e7aac08625a` (currently a sandbox)
+**Status:** ✅ EXECUTED 2026-06-16 (`162ba86`) — kept as a historical record; the "Verified API semantics" section remains the canonical reference. The build deviated from this plan in three ways: (1) OFP became a **universal** `Trainings > Organizing For Power` field (one network-level tag object) instead of same-named campaign-local fields — see `docs/sync_overview.md` → "The Organizing Team campaign"; (2) the `organizing_team_updates` parallel view was **not built** — campaign 26 simply gets no `update_records` pass (the nightly job invokes `update_records` per state campaign only), and the universal field makes one unnecessary for OFP; (3) organizer assignment via People:People connections (`organizing_team_assignments` / `assign_organizers`, shipped 2026-07-03) was added beyond this plan's scope.
+
+**Original status:** planned, not started · **Last updated:** 2026-06-12
+**Campaign:** "Organizing Team", id **26**, UUID `1e7e58fd-efb4-4810-91dc-2e7aac08625a` (a sandbox at planning time; live since 2026-06-16)
 
 ## Purpose
 

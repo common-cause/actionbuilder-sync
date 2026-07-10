@@ -6,16 +6,17 @@ Keeps participation data in [ActionBuilder](https://actionbuilder.org) current b
 
 ## What It Does
 
-Reads participation records from Mobilize, Action Network, and ScaleToWin, computes the correct tag values for each activist in ActionBuilder, compares them against what ActionBuilder currently shows, and outputs a table of changes. A custom sync script (provided by The Movement Cooperative) reads that table and makes the ActionBuilder API calls.
+Reads participation records from Mobilize, Action Network, ScaleToWin, NewMode, Soapboxx (storytelling), and the EP archive, computes the correct tag values for each activist in ActionBuilder, compares them against what ActionBuilder currently shows, and outputs a table of changes. Our own sync script (`scripts/sync.py`, built on the `ccef-connections` `ActionBuilderConnector`; it replaced the original TMC consultant script) reads that table and makes the ActionBuilder OSDI API calls.
 
-**Current state (2026-03-30):**
-- Nightly maintenance — running on Civis at 10 PM ET: `insert_new_records` → `update_records` → `apply_assessments`. Operational since 2026-03-25.
-- Tag updates — `update_records` running nightly across all 24 state campaigns
-- Assessments — `apply_assessments` sets engagement levels automatically (upgrade-only); see `docs/assessment_rules.md`
-- Deduplication — executed: 154 emails migrated, 91 phones migrated, 8,921 entities removed from campaigns
-- New record insertion — nightly; 3,532 initial entities inserted 2026-03-12, ongoing inserts since
-- Sync log — live: `actionbuilder_sync.sync_log` records all API operations with per-tag granularity
-- AB mirror bug — `taggable_logbook` replication restored ~2026-03-21 (was stalled 3/5–3/20); overlay model remains for hard-delete gap coverage
+**Current state (2026-07-03):**
+- Nightly maintenance — Civis workflow #119217 at 10 PM ET, 8 steps: `run_dbt` → `insert_new_records` → `update_records` → `apply_assessments` → `append_notes` → `connect_entities` → `insert_organizing_team` → `assign_organizers`. See `civis/SCHEDULED_SCRIPTS.md` for the authoritative per-step inventory.
+- Tag updates — `update_records` running nightly across all 24 state campaigns (22 original + VA + DC)
+- Assessments — `apply_assessments` sets engagement levels automatically (upgrade-only, incl. 1MC Host/Leader criteria); see `docs/assessment_rules.md`
+- Organizing Team campaign (id 26) — OFP training attendees connected/inserted nightly; members assigned to their regional organizer via People:People connections (`assign_organizers`)
+- New record insertion — nightly, gated by Mobilize anti-poaching rules (other groups' EP volunteers stay out; see `docs/sync_overview.md`)
+- 1MC — conversation notes append nightly (`append_notes`); 1MC tag columns staged in `updates_needed` but not yet wired into `sync.py` `TAG_COLS`
+- Sync log — live: `actionbuilder_sync.sync_log` records all API operations with per-tag granularity; overlay models compensate for the permanent hard-delete replication gap
+- Deduplication — executed March 2026: 154 emails migrated, 91 phones migrated, 8,921 entities removed from campaigns; 16 ambiguous pairs still in `dedup_unresolved`
 
 ---
 
@@ -58,7 +59,7 @@ Should report all checks passing.
 ## Running dbt
 
 ```bash
-# Deploy all 27 models to BigQuery
+# Deploy all models to BigQuery (44 models: 42 views + 2 tables, plus 4 seeds)
 bash dbt.sh run
 
 # Deploy a single model
@@ -79,7 +80,7 @@ All commands go through `dbt.sh → run_dbt.py`, which loads `.env`, writes the 
 
 ```
 ActionBuilder Sync/
-├── models/                     # All dbt models (deployed as BigQuery views)
+├── models/                     # All dbt models (BigQuery views unless marked TABLE)
 │   ├── schema.yml              # Model descriptions and data tests
 │   │
 │   │   ── Source/staging ──
@@ -88,8 +89,10 @@ ActionBuilder Sync/
 │   ├── mobilize_event_data.sql            # Mobilize attendance aggregated by email
 │   ├── scaletowin_call_data.sql           # ScaleToWin calls aggregated by phone
 │   ├── newmode_actions.sql                # NewMode letter submissions
+│   ├── soapboxx_stories.sql               # Soapboxx storytelling submissions
 │   ├── ofp_attendance.sql                 # OFP training attendance → universal Trainings field
-│   ├── ofp_universe.sql                    # Person-level OFP attendees (base for campaign-26 feeds)
+│   ├── ofp_universe.sql                   # Person-level OFP attendees (base for campaign-26 feeds)
+│   ├── external_ptv_source_codes.sql      # Canonical external/internal PTV source-code calls
 │   ├── state_action_network_top_performers.sql
 │   ├── action_network_national_top_performers.sql
 │   │
@@ -101,6 +104,14 @@ ActionBuilder Sync/
 │   ├── auto_assessment_rules.sql          # Assessment levels to write
 │   ├── hot_prospects.sql                  # High-engagement entities flagged for organizers
 │   │
+│   │   ── 1 Million Conversations (1MC) ──
+│   ├── 1mc_participants.sql               # Airtable 1MC participants resolved to AB entities
+│   ├── 1mc_role_attendance.sql            # Host/Leader role training attendance
+│   ├── 1mc_total_conversations.sql        # Conversation counts per entity
+│   ├── 1mc_prospects.sql                  # 1MC prospect statuses (staged; sync never writes)
+│   ├── 1mc_notes.sql                      # Conversation notes feed for append_notes
+│   ├── 1mc_entities_to_load.sql           # 1MC people not yet in AB
+│   │
 │   │   ── Deduplication ──
 │   ├── dedup_candidates.sql               # Sync-log filtered wrapper (used by sync.py)
 │   ├── dedup_candidates_bq_only.sql       # BQ-only version (used by dedup_ambiguous)
@@ -110,14 +121,21 @@ ActionBuilder Sync/
 │   ├── phone_migration_needed.sql         # Phones to copy to keeper entities before deletion
 │   │
 │   │   ── New record insertion ──
-│   ├── master_load_qualifiers.sql         # People who qualify for AB entry (incl. OFP attendance)
+│   ├── master_load_qualifiers.sql         # People who qualify for AB entry (TABLE; incl. anti-poaching gates)
 │   ├── deduplicated_names_to_load.sql     # Sync-log filtered wrapper (used by sync.py)
 │   ├── deduplicated_names_to_load_bq_only.sql  # BQ-only version
+│   │
+│   │   ── Removals / anti-poaching ──
+│   ├── removed_campaign_entities.sql      # Sync-log overlay of already-removed (entity, campaign) pairs
+│   ├── ep_external_removal.sql            # One-shot: partner-org EP volunteers to remove (run 2026-06-18)
+│   ├── mobilize_external_removal.sql      # One-shot: Mobilize-path external EP volunteers to remove
 │   │
 │   │   ── Organizing Team campaign (id 26) ──
 │   ├── organizing_team_connects.sql       # OFP attendees in AB → connect to campaign 26
 │   ├── organizing_team_inserts.sql        # Stateless OFP attendees → insert into campaign 26
 │   ├── organizing_team_review.sql         # OFP attendees that can't be routed cleanly
+│   ├── organizing_team_assignments.sql    # Members → regional organizer (People:People connections)
+│   ├── organizing_team_region_backfill.sql # Campaign-26 entities missing address.state
 │   │
 │   │   ── Diagnostics ──
 │   ├── identity_resolution.sql            # Entity → person_id mapping with data-source flags
@@ -125,44 +143,63 @@ ActionBuilder Sync/
 │   ├── test_campaign_updates.sql          # Test campaign pending changes (human-readable)
 │   └── test_campaign_update_summary.sql   # Test campaign change summary dashboard
 │
-├── civis/                      # Shell scripts for Civis Platform job deployment
+├── civis/                      # Civis Platform job entrypoints (GitHub-backed)
+│   ├── SCHEDULED_SCRIPTS.md         # Authoritative inventory of Civis jobs + workflow steps
+│   ├── civis_workflow.yaml          # Exported nightly workflow definition (task graph)
+│   ├── run_dbt.sh                   # Nightly step 0: refresh all models before syncing
 │   ├── insert_new_records.sh        # Nightly: add new entities
 │   ├── update_records.sh            # Nightly: sync tag values
 │   ├── apply_assessments.sh         # Nightly: set assessment levels
 │   ├── append_notes.sh              # Nightly: append 1MC conversation notes
 │   ├── connect_entities.sh          # Nightly: connect OFP attendees to campaign 26
 │   ├── insert_organizing_team.sh    # Nightly: insert stateless OFP attendees into campaign 26
+│   ├── assign_organizers.sh         # Nightly: assign campaign-26 members to regional organizers
 │   ├── snapshot_tag_state.sh        # On-demand: capture tag ground truth from API
 │   ├── cleanup_duplicate_tags.sh    # On-demand: remove duplicate taggings
+│   ├── remove_ep_externals.sh       # One-shot: remove partner-org EP volunteers (run 2026-06-18)
 │   └── remove_duplicate_entities.sh # One-time: dedup execution
 │
 ├── scripts/                    # Python sync scripts
 │   ├── sync.py                 # Main sync script (all operations)
 │   ├── cleanup_duplicate_tags.py  # Standalone: delete duplicate taggings
+│   ├── ai_resolve_dedup.py     # AI-assisted review of dedup_ambiguous pairs
+│   ├── add_resolution.py       # Record a manual dedup resolution
 │   ├── capture_ab_evidence.py  # One-time: AB bug report (mirror staleness)
 │   ├── targeted_evidence.py    # One-time: deletion-check and write-check evidence
 │   ├── check_bq_refresh.py     # Utility: check BQ table freshness
 │   ├── check_recent_inserts.py # Utility: verify recent entity insertions
+│   ├── time_query.py           # Utility: time a BQ query
+│   ├── test_connect_semantics.py  # Live-test driver: connect-vs-duplicate API semantics
+│   ├── test_notes.py           # Live-test driver: notes append
 │   ├── add_tags_to_campaigns.py   # One-time: add tag fields to campaigns
 │   ├── add_ofp_field_to_campaigns.py  # One-time: add OFP training field
-│   └── create_sync_log.sql     # One-time DDL to create sync_log table (already run)
+│   ├── create_sync_log.sql     # One-time DDL to create sync_log table (already run)
+│   └── create_dedup_resolutions.sql  # One-time DDL for dedup_resolutions table
 │
-├── evidence/                   # Output from evidence scripts (gitignored JSON/TXT reports)
+├── evidence/                   # Output from evidence scripts (March 2026 JSON/TXT reports, committed)
 │
 ├── seeds/                      # dbt seed CSVs
+│   ├── schema.yml              # Seed column definitions
 │   ├── state_an_thresholds.csv # Per-state AN action thresholds (MI=5, NE=5, default=20)
-│   └── ofp_training_map.csv    # Mobilize timeslot → OFP training name mapping
+│   ├── ofp_training_map.csv    # Mobilize timeslot → OFP training name mapping
+│   ├── 1mc_training_map.csv    # Mobilize timeslot → 1MC role training mapping
+│   └── organizer_state_map.csv # State → C&O organizer (drives assign_organizers)
 │
 ├── docs/
-│   ├── sync_overview.md        # Sync architecture, field formats, known issues
-│   ├── deduplication.md        # Dedup strategy, execution log, edge cases
+│   ├── sync_overview.md        # START HERE — architecture, field formats, new-platform recipe
+│   ├── actionbuilder_tags.md   # Verbatim AB OSDI API reference: tags
+│   ├── actionbuilder_person_signup.md  # Verbatim AB OSDI API reference: Person Signup Helper
 │   ├── assessment_rules.md     # Auto-assessment level criteria and write policy
+│   ├── deduplication.md        # Dedup strategy, execution log, edge cases
+│   ├── organizing_team_build_plan.md   # Campaign-26 build plan (executed 2026-06; historical)
 │   └── update_records_incident_2026-03-21.md  # Rate limit incident postmortem
 │
 ├── dbt_project.yml             # dbt project config
 ├── profiles.yml                # BigQuery connection config (reads keyfile from env var)
 ├── dbt.sh                      # Shell entry point: just calls run_dbt.py
-└── run_dbt.py                  # Credential loader + dbt subprocess wrapper
+├── run_dbt.py                  # Credential loader + dbt subprocess wrapper
+├── _query_test_campaign.py     # Ad-hoc diagnostic: campaigns/fields in updates_needed
+└── _spot_check_views.py        # Ad-hoc diagnostic: spot-check test-campaign views
 ```
 
 ---
@@ -173,11 +210,14 @@ ActionBuilder Sync/
 External Platforms          Staging Models             Core Models               Sync Job
 ──────────────────          ──────────────             ───────────               ────────
 Mobilize               ──► mobilize_event_data    ──┐
-Action Network         ──► action_network_6mo_actions ┤
-                       ──► state_an_top_performers    ├──► correct_participation_values ──┐
-ScaleToWin             ──► scaletowin_call_data    ──┘                                    ├──► updates_needed ──► sync script
-                                                                                           │
-ActionBuilder DB ──► (actionbuilder_cleaned.*) ──► current_tag_values ─────────────────┘
+                       ──► ofp_attendance            │
+Action Network         ──► action_network_6mo_actions┤
+                       ──► state/natl_top_performers ├──► correct_participation_values ──┐
+ScaleToWin             ──► scaletowin_call_data      │                                   │
+NewMode                ──► newmode_actions           │                                   ├──► updates_needed ──► sync script
+Soapboxx               ──► soapboxx_stories       ──┘                                   │
+                                                                                         │
+ActionBuilder DB ──► (actionbuilder_cleaned.*) ──► current_tag_values ────────────────┘
 ```
 
 `updates_needed` reads from both sides and outputs only the rows where the correct value differs from the current value, formatted for the sync script.
@@ -222,9 +262,12 @@ The MCP connects to `proj-tmc-mem-com` using the shared `BIGQUERY_CREDENTIALS_PA
 
 ## Detailed Documentation
 
-- **[docs/sync_overview.md](docs/sync_overview.md)** — Sync architecture, field list, tag removal, known issues, how to add new fields
-- **[docs/deduplication.md](docs/deduplication.md)** — Deduplication strategy, root cause, deletion workflow
+- **[docs/sync_overview.md](docs/sync_overview.md)** — **Start here.** Sync architecture, field list, tag removal, Organizing Team campaign, the recipe for incorporating a new platform
+- **[civis/SCHEDULED_SCRIPTS.md](civis/SCHEDULED_SCRIPTS.md)** — Authoritative inventory of Civis jobs, the nightly workflow steps, and job IDs
+- **[docs/actionbuilder_tags.md](docs/actionbuilder_tags.md)** / **[docs/actionbuilder_person_signup.md](docs/actionbuilder_person_signup.md)** — Verbatim ActionBuilder OSDI API references
 - **[docs/assessment_rules.md](docs/assessment_rules.md)** — Auto-assessment level criteria and write policy
+- **[docs/deduplication.md](docs/deduplication.md)** — Deduplication strategy, root cause, deletion workflow
+- **[docs/organizing_team_build_plan.md](docs/organizing_team_build_plan.md)** — Campaign-26 build plan (executed June 2026; kept for the verified API semantics)
 - **[docs/update_records_incident_2026-03-21.md](docs/update_records_incident_2026-03-21.md)** — Rate limit incident postmortem
 
 ---
@@ -238,8 +281,12 @@ The MCP connects to `proj-tmc-mem-com` using the shared `BIGQUERY_CREDENTIALS_PA
 5. **[Done]** Auto-assessments — `auto_assessment_rules` + `apply_assessments` operation, upgrade-only write policy
 6. **[Done]** OFP training tags — now the **universal** `Trainings > Organizing For Power` field (one network-level tag); attendance synced via Mobilize timeslot mapping and is a load qualifier
 7. **[Done]** `taggable_logbook` replication — AB fixed their internal mirror (~2026-03-21); overlay model retained for hard-delete gap
-8. **[Done]** Nightly maintenance — Civis runs insert_new_records → update_records → apply_assessments → append_notes → connect_entities → insert_organizing_team at 10 PM ET
+8. **[Done]** Nightly maintenance — Civis workflow #119217 runs run_dbt → insert_new_records → update_records → apply_assessments → append_notes → connect_entities → insert_organizing_team → assign_organizers at 10 PM ET
 9. **[Done]** Organizing Team campaign (id 26) — OFP attendees connected/inserted into the crosscutting campaign with the universal OFP field
-10. **[Active]** Resolve open `dedup_unresolved` pairs (16 same-campaign ambiguous pairs)
-11. **[Planned]** Slack alerting / replication sentinel — waiting on IT for Slack app + webhook
-12. **[Future]** New data flows: Airtable, Zoom, Mobilize relational organizing campaign
+10. **[Done]** Soapboxx storytelling — tag + load qualifier + hot-prospect signal (2026-06-11)
+11. **[Done]** Mobilize anti-poaching — Rules A/B keep other groups' EP volunteers out of the load path (2026-06-17)
+12. **[Done]** Organizer assignment — campaign-26 members wired to their regional organizer via People:People connections (2026-07-03; Lamair's states held until his AB account exists)
+13. **[Active]** 1MC rollout — notes append nightly; tag columns staged in `updates_needed`, not yet wired into `TAG_COLS`
+14. **[Active]** Resolve open `dedup_unresolved` pairs (16 same-campaign ambiguous pairs)
+15. **[Planned]** Slack alerting / replication sentinel — waiting on IT for Slack app + webhook
+16. **[Future]** New data flows: Airtable, Zoom, Mobilize relational organizing campaign
