@@ -705,8 +705,11 @@ models:
       haven't been called in the past 30 days and haven't been assessed at
       level 2+. Intended for organizer outreach prioritization.
 
-      Activity scoring = sum of Mobilize events (6mo) + AN actions (6mo)
-      + ScaleToWin calls (all-time) + NewMode submissions (6mo).
+      Activity scoring is WEIGHTED to value in-person / higher-bar actions over
+      online ones: higher-bar actions (Mobilize events 6mo, ScaleToWin calls
+      all-time, Soapboxx stories all-time) count 3x; online actions (AN actions
+      6mo, NewMode submissions 6mo) count 1x. Only the ranking score is weighted;
+      the per-platform count columns stay raw.
 
       Feeds into updates_needed to add/remove the "Hot Prospect" standard tag
       in the Engagement section. When an entity falls off the list, the tag
@@ -719,7 +722,9 @@ models:
       - name: campaign_interact_id
         description: The 36-char interact_id of the entity's active campaign.
       - name: total_activity_score
-        description: Sum of all activity signals used for ranking.
+        description: >
+          Weighted activity score used for ranking (higher-bar actions ×3,
+          online actions ×1). Not equal to the sum of the raw count columns.
       - name: prospect_rank
         description: Rank within campaign (1 = most active). Only ranks 1-10 are included.
       - name: hot_prospect_value

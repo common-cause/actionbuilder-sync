@@ -216,7 +216,7 @@ Section is `Participation` for every field except Hot Prospect (`Engagement`) an
 | Soapboxx Stories | Storytelling *(AB category; routed via the Online Actions column — NewMode-style reuse)* | number | `soapboxx_stories` | `online_actions_past_6_months_tag` |
 | Top State Action Taker | State Online Actions | standard | `state_action_network_top_performers` | `state_online_actions_tag` |
 | Top National Action Network Activist | National Online Actions | standard | `action_network_national_top_performers` | `national_online_actions_tag` |
-| Hot Prospect *(Section: Engagement / Cat: Prospect Identification)* | — | standard | `hot_prospects` (Mobilize+AN+STW+NewMode activity) | `engagement_tag` |
+| Hot Prospect *(Section: Engagement / Cat: Prospect Identification)* | — | standard | `hot_prospects` (weighted activity: in-person/higher-bar Mobilize·STW·Soapboxx ×3 > online AN·NewMode ×1) | `engagement_tag` |
 | OFP competencies: Organizing Basics, **Storytelling**, Relational Organizing, Rapid Response Basics | Organizing For Power *(Section: **Trainings** — universal)* | standard (additive multi-select) | `ofp_attendance` (Mobilize event 907019) | `ofp_tag` |
 
 **Notes:**
@@ -317,7 +317,7 @@ You usually want all three. They are independent edits, so build and validate ea
 - Add a `<platform>_qualifiers` CTE (one row per qualifying person with name/email/phone/created_at and a `qualification_reason` literal), add it to the `all_qualifiers` UNION, and — if the activity is genuine CC engagement — add it to `cc_engaged_emails` (the anti-poaching override). Choose the threshold: high-effort actions qualify at ≥1 (Mobilize/NewMode); high-volume online actions use a per-state threshold (AN). Downstream `deduplicated_names_to_load` then handles dedup/exclusion automatically.
 
 ### Surface 3 — Hot prospects (`hot_prospects`)
-- Add a `<platform>_activity` CTE (count per entity via the entity-email join), LEFT JOIN it in `entity_activity`, add it to `total_activity_score` (flat 1-per-action keeps the score comparable across platforms), and add an output column.
+- Add a `<platform>_activity` CTE (count per entity via the entity-email join), LEFT JOIN it in `entity_activity`, add it to `total_activity_score`, and add an output column. `total_activity_score` is **weighted** to value in-person / higher-bar actions over online ones (higher-bar ×3, online ×1 — see the `ENGAGEMENT WEIGHTS` comment in `hot_prospects.sql`); decide which tier your platform belongs to and weight it accordingly. Keep the raw per-platform output column unweighted for organizer visibility.
 
 ### Deploy & verify
 - `bash dbt.sh run -s <new_model>+` to build the model and its downstream dependents.

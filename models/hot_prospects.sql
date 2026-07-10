@@ -7,7 +7,10 @@
 --   - Current assessment level < 2 (or no assessment)
 --   - Has any activity in the past 6 months (Mobilize, AN, NewMode) OR any STW calls
 --
--- Ranked by total activity volume descending; top 10 per campaign.
+-- Ranked by a WEIGHTED activity score descending; top 10 per campaign.
+-- Engagement-ladder weighting: in-person / higher-bar actions count more than
+-- online clicks, so prospects who show up (or make the ask) outrank those who
+-- only take online actions. See ENGAGEMENT WEIGHTS in entity_activity below.
 -- When an entity falls off the list, updates_needed removes the Hot Prospect tag.
 
 WITH all_entity_emails AS (
@@ -135,11 +138,20 @@ entity_activity AS (
     COALESCE(stw.stw_calls, 0) as stw_calls,
     COALESCE(nm.newmode_count, 0) as newmode_count,
     COALESCE(sbx.soapboxx_stories, 0) as soapboxx_stories,
-    COALESCE(mob.mobilize_events_6mo, 0)
-      + COALESCE(an.an_actions_6mo, 0)
-      + COALESCE(stw.stw_calls, 0)
-      + COALESCE(nm.newmode_count, 0)
-      + COALESCE(sbx.soapboxx_stories, 0) as total_activity_score
+    -- ENGAGEMENT WEIGHTS: value in-person / higher-bar actions over online.
+    -- Higher-bar (weight 3): Mobilize events attended (showing up), ScaleToWin
+    --   phone-bank calls made (volunteering to make the ask), Soapboxx stories
+    --   told (a personal, high-commitment act).
+    -- Online / lower-bar (weight 1): Action Network + NewMode actions (clicks).
+    -- Raw per-platform counts above are kept unweighted for organizer visibility;
+    -- only this ranking score is weighted. All weights are positive, so the
+    -- total_activity_score > 0 qualifier gate is unaffected (same people qualify;
+    -- the top-10 cut just reorders).
+      (3 * COALESCE(mob.mobilize_events_6mo, 0))
+      + (3 * COALESCE(stw.stw_calls, 0))
+      + (3 * COALESCE(sbx.soapboxx_stories, 0))
+      + (1 * COALESCE(an.an_actions_6mo, 0))
+      + (1 * COALESCE(nm.newmode_count, 0)) as total_activity_score
   FROM ab_entities_in_active_campaigns ec
   LEFT JOIN mobilize_activity mob ON ec.entity_id = mob.entity_id
   LEFT JOIN an_activity an ON ec.entity_id = an.entity_id
