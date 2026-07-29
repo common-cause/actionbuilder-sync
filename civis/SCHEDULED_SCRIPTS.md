@@ -110,6 +110,7 @@ picked up by any step that hasn't started yet (and by every step on the next run
 - **Description:** Removes partner-org EP volunteers who were loaded via the old EP-shift path (anti-poaching cleanup). Executed 2026-06-18 (188 removed); the feed now reads 0 via the `removed_campaign_entities` overlay. The script body defaults to `--dry-run` with the live line commented out; its header says to archive it after execution.
 
 ### remove_duplicate_entities.sh
-- **Type:** On-demand (completed March 2026, not currently scheduled)
+- **Type:** On-demand supervised pass (executed March 2026 and 2026-07-29; not scheduled)
 - **APIs:** ActionBuilder API (~4 req/sec, throttled 0.3s), BigQuery (read)
-- **Description:** Three-phase dedup: migrate secondary emails to keeper entities, migrate phone numbers, then delete duplicate entities. Completed March 2026 (374 duplicates resolved). Retained for future use if duplicates reappear.
+- **Description:** Three-phase dedup: migrate secondary emails to keeper entities (`prepare_email_data`), migrate phone numbers (`prepare_phone_data`), then remove duplicate entities (`remove_records` over `dedup_candidates`). March 2026: 374 resolved. **2026-07-29: 535 resolved** (356 emails + 163 phones migrated first; the big blocks were VA-launch double-inserts from 2026-04-09/10 and Michigan voterbase matches). Feed is now empty except 33 `test_account` rows with no campaign (unremovable by this op).
+- **Cadence:** run supervised roughly quarterly, or after any bulk-load event (new campaign launch, new load qualifier). Before running, check: no organizer/staff entities in the feed, no row where `delete_tag_count > keep_tag_count`, and inspect any row whose keeper is in `removed_campaign_entities` (2026-07-29: those were lingering twins of purged externals — removing them was correct). Full runbook: `docs/deduplication.md` § Deletion Workflow.

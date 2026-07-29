@@ -169,3 +169,37 @@ These require human judgment and are not in `dedup_candidates`:
 - **"Winston Laura" vs "Laura Winston"**: clear name-entry reversal error. Person is already in the person_id tier.
 - **Same name, all different contact info** (~729 name pairs): could be genuine name-alikes. Skip automated dedup; handle manually if needed.
 - **Julie Berberi (8 entities, all Apple Hide My Email addresses)**: created in a 600ms burst — batch bug, but the icloud.com random aliases aren't in core_enhanced so they have no person_id. All have the same name; can be merged manually.
+
+---
+
+## July 2026 Execution (2026-07-29)
+
+Second full pass, prompted by the campaign-26 duplicate discovery (70 `insert_organizing_team`
+double-inserts + 17 launch-window/legacy pairs — see `civis/SCHEDULED_SCRIPTS.md` notes).
+The feed had accumulated **568 rows** since March: 338 voterbase_id_match, 195 person_id_match,
+35 test_account. The largest blocks were **Virginia (134 person_id rows)** — the VA campaign
+launch re-running the replication-lag double-insert on 2026-04-09/10 — and Michigan (93
+voterbase rows).
+
+Pre-run integrity checks (all passed or explained):
+- 0 self-pairs, 0 duplicate delete targets, 0 rows touching organizer/staff entities,
+  0 rows deleting a richer twin than the keeper.
+- 1 A→B→C chain (three entities, one person): both removals ran; terminal keeper survives.
+- 3 rows whose keeper was already removed by the EP/Mobilize external cleanups: their delete
+  twins were lingering entities of deliberately purged externals — removal completes that cleanup.
+- 42 "keeper not in campaign" rows = 33 test_account delete-only rows (no keeper) + 9 by-design
+  cross-campaign keepers.
+
+Execution: `prepare_email_data` (356, ok=356) → `prepare_phone_data` (163, ok=163) → keeper
+spot-check via live API → `remove_records` (**ok=535, err=0**, 33 no-campaign test rows skipped).
+Feed residue: the 33 test_account rows (no campaign to remove from — permanently unremovable
+by this op). `dedup_unresolved` manual-review queue: 170 pairs, untouched.
+
+Prevention shipped the same day: `insert_entity` sync_log rows now record the inserted email
+(`value_written`), and both insert feeds exclude by logged email as well as person_id — one
+email carrying multiple core person_ids was the mechanism behind the VA-launch and June
+launch-window duplicates. The `dedup_candidates` wrapper was also repointed at
+`removed_campaign_entities` so removals by any cleanup op clear the feed.
+
+**Cadence:** re-run this workflow (steps 1–4 above) supervised, roughly quarterly or after any
+bulk-load event (new campaign, new load qualifier).
