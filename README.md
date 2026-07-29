@@ -285,7 +285,7 @@ The MCP connects to `proj-tmc-mem-com` using the shared `BIGQUERY_CREDENTIALS_PA
 9. **[Done]** Organizing Team campaign (id 26) — OFP attendees connected/inserted into the crosscutting campaign with the universal OFP field
 10. **[Done]** Soapboxx storytelling — tag + load qualifier + hot-prospect signal (2026-06-11)
 11. **[Done]** Mobilize anti-poaching — Rules A/B keep other groups' EP volunteers out of the load path (2026-06-17)
-12. **[Done]** Organizer assignment — campaign-26 members wired to their regional organizer via People:People connections (2026-07-03; Lamair's states held until his AB account exists)
+12. **[Done]** Organizer assignment — campaign-26 members wired to their regional organizer via People:People connections (2026-07-03; Lamair's 141 assigned 2026-07-29 once his account activated — all four organizers live)
 13. **[Active]** 1MC rollout — notes append nightly; tag columns staged in `updates_needed`, not yet wired into `TAG_COLS`
 14. **[Active]** Resolve open `dedup_unresolved` pairs (16 same-campaign ambiguous pairs)
 15. **[Planned]** Slack alerting / replication sentinel — waiting on IT for Slack app + webhook

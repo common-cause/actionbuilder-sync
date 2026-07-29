@@ -258,7 +258,7 @@ A crosscutting (non-state) campaign for the organizing team to recruit OFP train
 
 Staffed-state attendees not yet in AB are loaded into their state campaign first, then connected to 26 once replicated (bounded 1–2 night lag).
 
-**Organizer assignment.** Each Organizing Team member is wired to the C&O organizer who covers their state so organizers can find *their own people* via AB connections. The connection **is** the assignment; the tag just labels it. Both ends must be members of campaign 26 — connect an organizer via `update_entity_with_tags(26, interact_id, [])`, **not** the AB UI (a UI add was observed not to persist, 2026-07-02). Initial load 2026-07-02: 281 connections (Carlos 41, Luana 99, Rommel 141). A temporary `--organizer "Carlos,Luana,Rommel"` filter in `civis/assign_organizers.sh` holds back Lamair Bryan's 141 members (CA/HI/MA/MI/NC) until his AB account exists — remove the flag then.
+**Organizer assignment.** Each Organizing Team member is wired to the C&O organizer who covers their state so organizers can find *their own people* via AB connections. The connection **is** the assignment; the tag just labels it. Both ends must be members of campaign 26 — connect an organizer via `update_entity_with_tags(26, interact_id, [])`, **not** the AB UI (a UI add was observed not to persist, 2026-07-02). Initial load 2026-07-02: 281 connections (Carlos 41, Luana 99, Rommel 141); Lamair Bryan's 141 (CA/HI/MA/MI/NC) followed 2026-07-29 once his AB account activated, and the temporary `--organizer` filter in `civis/assign_organizers.sh` was removed — all four organizers now flow nightly.
 
 ---
 
