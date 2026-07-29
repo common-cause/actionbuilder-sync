@@ -59,6 +59,19 @@ already_inserted AS (
     AND person_id IS NOT NULL
 ),
 
+-- Emails already inserted by ANY insert op (value_written on insert_entity rows,
+-- logged since 2026-07-29). person_id alone is not enough — one email can carry
+-- multiple core person_ids (the 2026-06-17/18 state-campaign dup pairs), and a
+-- person state-inserted last night must not be OT-inserted tonight while the
+-- mirror lags. Deliberately global (not campaign-26-scoped).
+already_inserted_email AS (
+  SELECT DISTINCT LOWER(TRIM(value_written)) AS email_norm
+  FROM `proj-tmc-mem-com`.actionbuilder_sync.sync_log
+  WHERE operation = 'insert_entity'
+    AND status = 'ok'
+    AND value_written IS NOT NULL
+),
+
 -- Voter-file (NTL) state, the state-routing fallback when zip-derived state is null/unstaffed
 -- — mirrors master_load_qualifiers' final_with_voter_file_fallback. Replaces the former
 -- anti-join against deduplicated_names_to_load (which inlined the whole master_load_qualifiers
@@ -110,8 +123,9 @@ eligible AS (
   LEFT JOIN ab_emails ae      ON ae.email_norm = op.email_normalized
   LEFT JOIN ab_person_ids api ON api.person_id = op.person_id
 
-  -- Not already inserted by this op (sync_log overlay; covers the mirror's lag)
-  LEFT JOIN already_inserted ai ON ai.person_id = op.person_id
+  -- Not already inserted (sync_log overlay; covers the mirror's lag)
+  LEFT JOIN already_inserted ai        ON ai.person_id = op.person_id
+  LEFT JOIN already_inserted_email aie ON aie.email_norm = op.email_normalized
 
   -- Voter-file state for the routing fallback
   LEFT JOIN voter_file_state vf ON vf.person_id = op.person_id
@@ -119,6 +133,7 @@ eligible AS (
   WHERE ae.email_norm IS NULL
     AND api.person_id IS NULL
     AND ai.person_id IS NULL
+    AND aie.email_norm IS NULL
 
     -- No staffed state-load path: neither the zip-derived state nor the voter-file fallback
     -- is a staffed campaign. (Staffed-state attendees reach 26 via organizing_team_connects

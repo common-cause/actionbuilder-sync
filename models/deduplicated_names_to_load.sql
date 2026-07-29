@@ -10,8 +10,14 @@
 -- the new entities in actionbuilder_cleaned).
 --
 -- Matches on person_id (the source-system identity available in both this view
--- and the sync log). Records with NULL person_id pass through unchanged —
--- they cannot be matched by person_id and rely solely on BQ contact exclusion.
+-- and the sync log) AND on email (sync_log value_written for insert_entity rows,
+-- logged since 2026-07-29). person_id alone is not enough: one email can carry
+-- multiple core person_ids (upstream identity dupes), so night 2 saw the second
+-- person_id as new while BQ replication lag blinded the email-based already-in-AB
+-- check — 16 duplicate entity pairs on 2026-06-17/18. Records with NULL person_id
+-- AND no email match still pass through and rely on BQ contact exclusion.
+-- (Same-person-different-email dupes remain out of reach of both keys; only the
+-- dedup_candidates flow catches those.)
 --
 -- To revert to BQ-only mode when replication is reliable:
 --   1. Delete this file.
@@ -20,11 +26,19 @@
 
 SELECT *
 FROM {{ ref('deduplicated_names_to_load_bq_only') }}
-WHERE person_id IS NULL
+WHERE (person_id IS NULL
    OR person_id NOT IN (
      SELECT person_id
      FROM `proj-tmc-mem-com`.actionbuilder_sync.sync_log
      WHERE operation = 'insert_entity'
        AND status = 'ok'
        AND person_id IS NOT NULL
-   )
+   ))
+  AND (email IS NULL
+   OR LOWER(TRIM(email)) NOT IN (
+     SELECT LOWER(TRIM(value_written))
+     FROM `proj-tmc-mem-com`.actionbuilder_sync.sync_log
+     WHERE operation = 'insert_entity'
+       AND status = 'ok'
+       AND value_written IS NOT NULL
+   ))

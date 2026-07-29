@@ -744,8 +744,12 @@ def insert_new_records(
             logger.debug(f'  Inserted {label} (campaign={campaign_id[:8]}...)')
             n_ok += 1
             if sync_logger:
+                # value_written = inserted email, so the feed wrappers can exclude by
+                # email as well as person_id (a shared email can carry multiple core
+                # person_ids; person_id alone let night-2 re-inserts through during
+                # the BQ replication lag window — 16 dup pairs on 2026-06-17/18)
                 sync_logger.log('insert_entity', None, campaign_id, 'ok',
-                                person_id=pid)
+                                person_id=pid, value_written=row.get('email'))
                 # Log per-tag add_tagging entries for tag-state reconstruction
                 for tag in add_tags:
                     tag_name, value_written = _extract_tag_info(tag)
@@ -1789,7 +1793,10 @@ def insert_organizing_team(
             ab.insert_entity(campaign_id, person_data, add_tags or None)
             n_ok += 1
             if sync_logger:
-                sync_logger.log('insert_entity', None, campaign_id, 'ok', person_id=pid)
+                # value_written = inserted email (see insert_new_records) — feeds the
+                # email-keyed already_inserted guard in organizing_team_inserts
+                sync_logger.log('insert_entity', None, campaign_id, 'ok',
+                                person_id=pid, value_written=key)
                 for tag in add_tags:
                     tag_name, value_written = _extract_tag_info(tag)
                     sync_logger.log(
