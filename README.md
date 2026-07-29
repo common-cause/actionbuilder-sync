@@ -285,7 +285,7 @@ The MCP connects to `proj-tmc-mem-com` using the shared `BIGQUERY_CREDENTIALS_PA
 9. **[Done]** Organizing Team campaign (id 26) — OFP attendees connected/inserted into the crosscutting campaign with the universal OFP field
 10. **[Done]** Soapboxx storytelling — tag + load qualifier + hot-prospect signal (2026-06-11)
 11. **[Done]** Mobilize anti-poaching — Rules A/B keep other groups' EP volunteers out of the load path (2026-06-17)
-12. **[Done]** Organizer assignment — campaign-26 members wired to their assigned organizer via People:People connections (2026-07-03; Lamair's 141 assigned 2026-07-29). Unstaffed states + territories route to Tiffany Rubio (organizing intern): her 71 assigned 2026-07-29 after the `remove_ot_duplicates` cleanup removed 70 double-insert twins from campaign 26 (bug fixed with a sync_log overlay). All five organizers live; 16 launch-window + 1 legacy dup pairs still pending triage
+12. **[Done]** Organizer assignment — campaign-26 members wired to their assigned organizer via People:People connections (2026-07-03; Lamair's 141 assigned 2026-07-29). Unstaffed states + territories route to Tiffany Rubio (organizing intern): her 71 assigned 2026-07-29 after the `remove_ot_duplicates` cleanup removed 70 double-insert twins from campaign 26 (bug fixed with a sync_log overlay). All five organizers live; all 87 campaign-26 duplicate pairs resolved 2026-07-29 (70 bug twins + 17 triaged)
 13. **[Active]** 1MC rollout — notes append nightly; tag columns staged in `updates_needed`, not yet wired into `TAG_COLS`
 14. **[Active]** Resolve open `dedup_unresolved` pairs (16 same-campaign ambiguous pairs)
 15. **[Planned]** Slack alerting / replication sentinel — waiting on IT for Slack app + webhook

@@ -18,12 +18,14 @@
 --   3. Revert dedup_ambiguous.sql ref back to dedup_candidates.
 --   The sync_log table can remain as a permanent audit log.
 
+-- Filter via removed_campaign_entities (the canonical union of ALL removal ops) rather
+-- than remove_from_campaign alone — an entity removed by any cleanup op (remove_ep_external,
+-- remove_mobilize_external, remove_ot_duplicate, ...) must not be re-proposed here.
+-- Entity-level (any campaign) to preserve the original conservative "ever removed" semantics.
 SELECT *
 FROM {{ ref('dedup_candidates_bq_only') }}
 WHERE NOT EXISTS (
   SELECT 1
-  FROM `proj-tmc-mem-com`.actionbuilder_sync.sync_log sl
-  WHERE sl.entity_interact_id = delete_interact_id
-    AND sl.operation = 'remove_from_campaign'
-    AND sl.status IN ('ok', '404')  -- both mean entity is absent from campaign
+  FROM {{ ref('removed_campaign_entities') }} rce
+  WHERE rce.entity_interact_id = delete_interact_id
 )
