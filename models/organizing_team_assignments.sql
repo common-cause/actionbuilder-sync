@@ -9,9 +9,11 @@
 -- by the connection's other endpoint, not by the (constant) tag value.
 --
 -- Routing: member entity -> its emails -> ofp_universe.state (zip-derived) ->
--- organizer_state_map seed. Only the 24 staffed states are in the seed, so members
--- in unstaffed or unknown states are intentionally left unassigned in v1 (they never
--- join the seed). See KL "C&O National Organizing Team — State Coverage".
+-- organizer_state_map seed. The seed covers every state/territory the zip crosswalk
+-- can produce: the 24 staffed states split across the four regional organizers, and
+-- (since 2026-07-29) all unstaffed states + territories routed to Tiffany Rubio
+-- (organizing intern). Only members with no zip-derived state are left unassigned.
+-- See KL "C&O National Organizing Team — State Coverage".
 --
 -- Idempotency / replication lag:
 --   - Members come from the BQ campaigns_entities snapshot UNION the sync_log
@@ -48,10 +50,26 @@ members_log AS (
     AND entity_interact_id IS NOT NULL
 ),
 
+-- Entities sync.py has removed from campaign 26. Hard deletes never replicate, so
+-- members_bq shows removed entities forever; without this subtraction the feed would
+-- retry (and 404) removed members every night.
+members_removed AS (
+  SELECT entity_interact_id AS member_interact_id
+  FROM {{ ref('removed_campaign_entities') }}
+  WHERE campaign_interact_id = '{{ campaign_26 }}'
+),
+
 members AS (
   SELECT member_interact_id FROM members_bq
   UNION DISTINCT
   SELECT member_interact_id FROM members_log
+),
+
+live_members AS (
+  SELECT m.member_interact_id
+  FROM members m
+  LEFT JOIN members_removed mr ON mr.member_interact_id = m.member_interact_id
+  WHERE mr.member_interact_id IS NULL
 ),
 
 -- Resolve each member entity to its verified emails
@@ -59,7 +77,7 @@ member_emails AS (
   SELECT
     e.interact_id           AS member_interact_id,
     LOWER(TRIM(em.email))   AS email
-  FROM members m
+  FROM live_members m
   JOIN actionbuilder_cleaned.cln_actionbuilder__entities e
     ON e.interact_id = m.member_interact_id
   JOIN actionbuilder_cleaned.cln_actionbuilder__emails em
