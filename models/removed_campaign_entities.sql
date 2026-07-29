@@ -15,6 +15,7 @@
 --   remove_from_campaign   — remove_records (dedup duplicate removal)
 --   remove_ep_external     — remove_ep_externals (partner-org EP-shift cleanup)
 --   remove_mobilize_external — remove_mobilize_externals (Rule A/B anti-poaching cleanup)
+--   remove_ot_duplicate    — remove_ot_duplicates (campaign-26 double-insert twin cleanup)
 -- status IN ('ok','404') both mean the entity is absent from the campaign (404 = the
 -- delete found it already gone, i.e. desired state achieved).
 --
@@ -26,7 +27,7 @@ SELECT DISTINCT
   entity_interact_id,
   campaign_interact_id
 FROM `proj-tmc-mem-com`.actionbuilder_sync.sync_log
-WHERE operation IN ('remove_from_campaign', 'remove_ep_external', 'remove_mobilize_external')
+WHERE operation IN ('remove_from_campaign', 'remove_ep_external', 'remove_mobilize_external', 'remove_ot_duplicate')
   AND status IN ('ok', '404')
   AND entity_interact_id IS NOT NULL
   AND campaign_interact_id IS NOT NULL

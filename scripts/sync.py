@@ -1943,12 +1943,98 @@ def assign_organizers(
     logger.info(f'assign_organizers: done. ok={n_ok} err={n_err} skipped={n_skip}')
 
 
+def remove_ot_duplicates(
+    bq: BigQueryConnector,
+    ab: Optional[ActionBuilderConnector],
+    campaign_filter: Optional[str],
+    dry_run: bool,
+    limit: Optional[int],
+    delay: float = 0.0,
+    sync_logger: Optional[SyncLogger] = None,
+) -> None:
+    """
+    One-shot cleanup: remove the newer twin of each campaign-26 duplicate entity
+    pair created by the organizing_team_inserts double-insert bug (2026-06-20/21;
+    the feed's "already in AB" check had no sync_log overlay, so the BQ mirror's
+    replication lag let night 2 re-insert all of night 1's people).
+
+    Reads actionbuilder_sync.ot_duplicate_removal and calls delete_person for each
+    delete_interact_id. Same delete shape as remove_ep_externals, but with
+    operation='remove_ot_duplicate' in sync_log (listed in removed_campaign_entities,
+    so the feed self-clears and organizing_team_assignments drops removed twins).
+    """
+    logger.info('remove_ot_duplicates: fetching rows from ot_duplicate_removal...')
+    sql = (
+        f'SELECT delete_interact_id, delete_first_name, delete_last_name, '
+        f'campaign_interact_id, removal_reason '
+        f'FROM `{BQ_PROJECT}.{BQ_DATASET}.ot_duplicate_removal`'
+    )
+    if limit:
+        sql += f' LIMIT {limit}'
+    rows = _query(bq, sql)
+
+    if not rows:
+        logger.info('remove_ot_duplicates: no rows to process')
+        return
+
+    logger.info(f'remove_ot_duplicates: {len(rows)} duplicate twins to remove')
+    n_ok = n_err = n_skip = 0
+
+    for row in rows:
+        entity_id = str(row['delete_interact_id'])
+        campaign_id = row.get('campaign_interact_id')
+        name = (
+            f"{row.get('delete_first_name', '')} "
+            f"{row.get('delete_last_name', '')}".strip()
+        )
+        label = f'{entity_id[:8]}... ({name!r})'
+
+        if campaign_filter and campaign_id != campaign_filter:
+            n_skip += 1
+            continue
+
+        if dry_run:
+            logger.info(f'  [DRY-RUN] Would delete entity {label} (campaign={campaign_id[:8]}...)')
+            n_ok += 1
+            continue
+
+        try:
+            ab.delete_person(campaign_id, entity_id)
+            logger.debug(f'  Deleted {label}')
+            n_ok += 1
+            if sync_logger:
+                sync_logger.log('remove_ot_duplicate', entity_id, campaign_id, 'ok')
+            if delay:
+                time.sleep(delay)
+        except Exception as e:
+            err_str = str(e)
+            if '404' in err_str:
+                logger.debug(f'  Already gone (404) {label}')
+                n_skip += 1
+                if sync_logger:
+                    sync_logger.log('remove_ot_duplicate', entity_id, campaign_id, '404')
+                if delay:
+                    time.sleep(delay)
+            else:
+                logger.error(f'  ERROR deleting {label}: {e}')
+                n_err += 1
+                if sync_logger:
+                    sync_logger.log('remove_ot_duplicate', entity_id, campaign_id,
+                                    'error', error_detail=err_str[:500])
+
+    logger.info(
+        f'remove_ot_duplicates: done. ok={n_ok} err={n_err} '
+        f'skipped={n_skip} (includes 404-already-gone)'
+    )
+
+
 OPERATIONS = {
     'update_records': update_records,
     'insert_new_records': insert_new_records,
     'remove_records': remove_records,
     'remove_ep_externals': remove_ep_externals,
     'remove_mobilize_externals': remove_mobilize_externals,
+    'remove_ot_duplicates': remove_ot_duplicates,
     'prepare_email_data': prepare_email_data,
     'prepare_phone_data': prepare_phone_data,
     'backfill_region': backfill_region,
@@ -2039,9 +2125,9 @@ def main() -> None:
 
     op_fn = OPERATIONS[args.operation]
     kwargs: Dict[str, Any] = {}
-    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'prepare_email_data', 'prepare_phone_data', 'backfill_region', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes', 'connect_entities', 'insert_organizing_team', 'assign_organizers'):
+    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'remove_ot_duplicates', 'prepare_email_data', 'prepare_phone_data', 'backfill_region', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes', 'connect_entities', 'insert_organizing_team', 'assign_organizers'):
         kwargs['delay'] = args.delay
-    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'backfill_region', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes', 'connect_entities', 'insert_organizing_team', 'assign_organizers'):
+    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'remove_ot_duplicates', 'backfill_region', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes', 'connect_entities', 'insert_organizing_team', 'assign_organizers'):
         kwargs['sync_logger'] = sync_logger
     if args.operation == 'assign_organizers':
         kwargs['organizer_filter'] = args.organizer
