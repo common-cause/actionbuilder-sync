@@ -90,8 +90,12 @@ connectable AS (
   FROM pick_one p
   LEFT JOIN already_in_26_bq  bq  ON bq.entity_interact_id  = p.entity_interact_id
   LEFT JOIN already_in_26_log lg  ON lg.entity_interact_id  = p.entity_interact_id
+  -- Never connect a suppressed person (curated do-not-sync list)
+  LEFT JOIN {{ ref('suppressed_entities') }} sup
+    ON sup.entity_interact_id = p.entity_interact_id
   WHERE bq.entity_interact_id IS NULL
     AND lg.entity_interact_id IS NULL
+    AND sup.entity_interact_id IS NULL
 )
 
 SELECT

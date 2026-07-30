@@ -42,3 +42,17 @@ WHERE (person_id IS NULL
        AND status = 'ok'
        AND value_written IS NOT NULL
    ))
+  -- Suppression guard: never insert a person on the curated do-not-sync list
+  -- (actionbuilder_sync.suppression_list, managed via scripts/add_suppression.py)
+  AND (email IS NULL
+   OR LOWER(TRIM(email)) NOT IN (
+     SELECT LOWER(TRIM(email))
+     FROM `proj-tmc-mem-com`.actionbuilder_sync.suppression_list
+     WHERE email IS NOT NULL
+   ))
+  AND (person_id IS NULL
+   OR person_id NOT IN (
+     SELECT person_id
+     FROM `proj-tmc-mem-com`.actionbuilder_sync.suppression_list
+     WHERE person_id IS NOT NULL
+   ))

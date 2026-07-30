@@ -98,6 +98,12 @@ picked up by any step that hasn't started yet (and by every step on the next run
 - **APIs:** ActionBuilder API (~4 req/sec, throttled 0.3s), BigQuery (write)
 - **Description:** Captures current tag state from AB API for all campaigns and logs `add_tagging` rows to `actionbuilder_sync.sync_log`. Used for recovery/healing sync_log gaps — critical to run before retrying `update_records` after a failed sync.
 
+### remove_suppressed (no shell script yet — run locally)
+- **Type:** On-demand (added 2026-07-30)
+- **APIs:** ActionBuilder API (~4 req/sec, throttled 0.3s), BigQuery (read + sync_log write)
+- **Input view:** `actionbuilder_sync.suppression_removal`
+- **Description:** The **suppression layer**: a curated do-not-sync list (`actionbuilder_sync.suppression_list`, BQ table managed outside dbt — add entries with `scripts/add_suppression.py`, one row per email / person_id / entity interact_id). This op removes suppressed people's entities from ALL active campaigns (logs `remove_suppressed`, listed in `removed_campaign_entities` so the feed self-clears); the insert/connect feeds (`deduplicated_names_to_load`, `organizing_team_inserts`, `organizing_team_connects`) permanently exclude listed identifiers so the sync never re-adds them. Run after adding entries: `python scripts/sync.py remove_suppressed --dry-run`, then live. First entry 2026-07-30 (per Rob).
+
 ### cleanup_duplicate_tags.sh
 - **Type:** On-demand (not in nightly workflow)
 - **APIs:** ActionBuilder API (~4 req/sec, throttled 0.3s)

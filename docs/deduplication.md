@@ -203,3 +203,25 @@ launch-window duplicates. The `dedup_candidates` wrapper was also repointed at
 
 **Cadence:** re-run this workflow (steps 1–4 above) supervised, roughly quarterly or after any
 bulk-load event (new campaign, new load qualifier).
+
+---
+
+## July 2026 — dedup_unresolved cleared by agent review (2026-07-30)
+
+All **170 pairs** in `dedup_unresolved` were resolved in one agent (Claude) review session,
+using evidence beyond what `ai_resolve_dedup.py` feeds GPT-4o: street addresses, all
+secondary emails/phones, campaign memberships, and activity recency per entity. Decisions
+written to `dedup_resolutions` (`resolved_by='ai:claude-fable-5'`): **118 MERGE / 52
+KEEP_BOTH / 0 DEFER** (6 initial defers — couples sharing an email — resolved KEEP_BOTH per
+Rob). 114 merge rows flowed into `dedup_candidates` (`resolved_merge` tier; the other 4 were
+already-removed twins or trio-duplicates) and were executed by the standard supervised pass
+the same day. Notable rule applications: corruption-over-tags (repeated/concatenated names
+deleted even when richer — contact migration preserves their emails/phones and the nightly
+sync recomputes participation tags on the keeper), a reversed-surname corruption
+("Sioramed" = "Demarois" backwards), and household KEEP_BOTHs decided by shared street
+address + distinct personal emails. The dominant lesson: **most ambiguity comes from couples
+sharing an email address** — email is not an individual-level identifier in this membership.
+
+Also added 2026-07-30: the **suppression layer** (`suppression_list` table +
+`remove_suppressed` op + insert/connect feed guards) for people who must be removed and
+never re-synced. See `civis/SCHEDULED_SCRIPTS.md`.

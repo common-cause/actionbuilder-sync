@@ -72,6 +72,12 @@ already_inserted_email AS (
     AND value_written IS NOT NULL
 ),
 
+-- Curated do-not-sync list (scripts/add_suppression.py)
+suppressed AS (
+  SELECT LOWER(TRIM(email)) AS email_norm, person_id
+  FROM `proj-tmc-mem-com`.actionbuilder_sync.suppression_list
+),
+
 -- Voter-file (NTL) state, the state-routing fallback when zip-derived state is null/unstaffed
 -- — mirrors master_load_qualifiers' final_with_voter_file_fallback. Replaces the former
 -- anti-join against deduplicated_names_to_load (which inlined the whole master_load_qualifiers
@@ -127,6 +133,10 @@ eligible AS (
   LEFT JOIN already_inserted ai        ON ai.person_id = op.person_id
   LEFT JOIN already_inserted_email aie ON aie.email_norm = op.email_normalized
 
+  -- Not on the suppression list (by email or person_id)
+  LEFT JOIN suppressed se ON se.email_norm = op.email_normalized
+  LEFT JOIN suppressed sp ON sp.person_id  = op.person_id
+
   -- Voter-file state for the routing fallback
   LEFT JOIN voter_file_state vf ON vf.person_id = op.person_id
 
@@ -134,6 +144,8 @@ eligible AS (
     AND api.person_id IS NULL
     AND ai.person_id IS NULL
     AND aie.email_norm IS NULL
+    AND se.email_norm IS NULL
+    AND sp.person_id IS NULL
 
     -- No staffed state-load path: neither the zip-derived state nor the voter-file fallback
     -- is a staffed campaign. (Staffed-state attendees reach 26 via organizing_team_connects

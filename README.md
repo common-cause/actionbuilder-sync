@@ -174,7 +174,9 @@ ActionBuilder Sync/
 │   ├── add_tags_to_campaigns.py   # One-time: add tag fields to campaigns
 │   ├── add_ofp_field_to_campaigns.py  # One-time: add OFP training field
 │   ├── create_sync_log.sql     # One-time DDL to create sync_log table (already run)
-│   └── create_dedup_resolutions.sql  # One-time DDL for dedup_resolutions table
+│   ├── create_dedup_resolutions.sql  # One-time DDL for dedup_resolutions table
+│   ├── create_suppression_list.sql   # One-time DDL for suppression_list table (already run)
+│   └── add_suppression.py      # Add a person to the do-not-sync suppression list
 │
 ├── evidence/                   # Output from evidence scripts (March 2026 JSON/TXT reports, committed)
 │
