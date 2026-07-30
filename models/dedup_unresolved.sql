@@ -19,10 +19,14 @@
 -- Create it once using scripts/create_dedup_resolutions.sql before running dbt.
 -- It starts empty; all rows in dedup_ambiguous appear here on first run.
 
+-- DEFER rows do NOT hide a pair: per add_resolution.py's documented semantics a
+-- deferred pair stays in the queue (fixed 2026-07-30 — the join previously matched
+-- any decision row, so a DEFER silently buried the pair).
 SELECT da.*
 FROM {{ ref('dedup_ambiguous') }} da
 LEFT JOIN `proj-tmc-mem-com`.actionbuilder_sync.dedup_resolutions dr
   ON da.pair_id = dr.pair_id
+ AND dr.decision != 'DEFER'
 WHERE dr.pair_id IS NULL
 
 ORDER BY da.signal_type, da.entity_a_last_name, da.entity_a_first_name

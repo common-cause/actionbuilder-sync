@@ -176,7 +176,9 @@ ActionBuilder Sync/
 │   ├── create_sync_log.sql     # One-time DDL to create sync_log table (already run)
 │   ├── create_dedup_resolutions.sql  # One-time DDL for dedup_resolutions table
 │   ├── create_suppression_list.sql   # One-time DDL for suppression_list table (already run)
-│   └── add_suppression.py      # Add a person to the do-not-sync suppression list
+│   ├── add_suppression.py      # Add a person to the do-not-sync suppression list
+│   ├── agent_resolve_dedup.py  # Weekly agent pass helper: evidence pull + decision writer
+│   └── run_weekly_dedup.ps1    # Task Scheduler wrapper for the weekly dedup agent
 │
 ├── evidence/                   # Output from evidence scripts (March 2026 JSON/TXT reports, committed)
 │
@@ -259,6 +261,25 @@ bq_list_tables("actionbuilder_sync")
 ```
 
 The MCP connects to `proj-tmc-mem-com` using the shared `BIGQUERY_CREDENTIALS_PASSWORD` service account from the meta-project `.env`. No per-project credential setup is required for Claude Code queries — only `dbt` / `run_dbt.py` reads the local `.env`.
+
+---
+
+## Local Scheduled Agent Jobs (this machine, not Civis)
+
+Judgment passes run as local scheduled Claude Code agents on Rob's machine (subscription
+connection, full repo/credential access) — deterministic pipelines stay on Civis. See KL
+entry `local-scheduled-claude-agents-task-scheduler-the-pattern-for-recurring-agentic-p`.
+
+- **"ActionBuilder Sync - weekly dedup agent"** (Task Scheduler, Mondays 7:23 AM local,
+  registered 2026-07-30): runs the `weekly-dedup-resolve` skill headless via
+  `scripts/run_weekly_dedup.ps1`. The agent judges new `dedup_unresolved` pairs with
+  enriched evidence (`scripts/agent_resolve_dedup.py evidence`) and writes high/medium-
+  confidence MERGE/KEEP_BOTH decisions to `dedup_resolutions` (`... write --file`);
+  uncertain pairs stay in the queue for human review, and it aborts (no writes) if the
+  queue exceeds 40 pairs. Rubric: `.claude/skills/weekly-dedup-resolve/SKILL.md`.
+  Run logs: `logs/weekly_dedup_<date>.log` (gitignored). MERGE decisions accumulate in
+  `dedup_candidates` until the next human-supervised removal pass (contact migration →
+  `remove_records`) — the agent never removes anything.
 
 ---
 
