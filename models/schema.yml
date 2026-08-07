@@ -804,3 +804,32 @@ models:
         description: >
           The connection info tag as a standard sync string
           ("Organizer Relationships:|:Assigned Organizer:|:Regional Organizer:|:standard_response:Regional Organizer").
+
+  - name: phantom_tag_writes
+    description: >
+      Silent-drop detector: sync_log `add_tagging ok` rows older than 7 days
+      with no evidence (any live or deleted row) in taggable_logbook, grouped
+      by campaign x tag. AB's signup helper returns 200 for writes to fields
+      not activated in the target campaign and drops the tagging — this burned
+      VA/DC for three months in 2026 (~24K writes, annotated status='phantom'
+      in sync_log on 2026-08-07). Expected state: zero rows. Nonzero rows mean
+      a field is missing/deactivated in that campaign, or logbook replication
+      has stalled past the grace period. Check after adding a campaign or tag
+      field; candidate feed for the Slack replication sentinel.
+    columns:
+      - name: campaign_id
+        description: Internal numeric campaign id (NULL if the campaign UUID no longer resolves).
+      - name: campaign_name
+        description: Campaign display name.
+      - name: tag_name
+        description: The tag value name whose writes have no logbook evidence.
+        tests:
+          - not_null
+      - name: n_unmatched_writes
+        description: Count of ok add_tagging rows with no matching logbook row.
+      - name: n_entities
+        description: Distinct entities affected.
+      - name: first_write
+        description: Date of the earliest unmatched write.
+      - name: last_write
+        description: Date of the latest unmatched write.

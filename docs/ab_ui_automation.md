@@ -8,10 +8,11 @@ browser MCP. It mirrors the `ptv-tools` pattern (PTV admin automation), which
 proved out the design: one headed human login, storage state persisted outside
 the repo, everything afterward runs headless.
 
-Known UI-only work this exists for: campaign-local sections for VA/DC
-(campaigns 24/25 — the silent tag-write drop), the tag taxonomy redesign
-(creating/archiving sections and fields across 24 campaigns), and removing the
-wrongly-attached staff email from the Kelly Dufour entities.
+Known UI-only work this exists for: the tag taxonomy redesign
+(creating/archiving sections and fields across 24 campaigns). Completed with
+this tooling 2026-08-07: field activation for VA/DC (the silent tag-write
+drop), network-wide Soapboxx Stories activation, and the Kelly Dufour
+wrong-email fix.
 
 ## Components
 
@@ -84,6 +85,49 @@ with sync_playwright() as pw:
     ...
 ```
 
+## GraphQL replay (learned 2026-08-07)
+
+The AB web UI is an Angular app over `POST /api/graphql`. For bulk repeats of a
+flow you've done once, replaying the captured mutation beats UI clicking:
+
+1. Do the action once in the UI; pull the mutation from
+   `browser_network_requests` / `browser_network_request` (request-body).
+2. Replay it via in-page `fetch` (`browser_run_code_unsafe` →
+   `page.evaluate`). **Cookies alone are NOT enough for mutations** — the app
+   uses devise-token-auth; send these headers, read from localStorage:
+   `access-token` (key `accessToken`), `client`, `uid`, `token-type`.
+   Persist any rotated `access-token` response header back to localStorage
+   before the next call. Queries parse without them; mutations 200 with a
+   `"User is not logged in."` GraphQL error if they're missing.
+3. Verify from the mutation's own response selection (e.g.
+   `isInCampaign(campaignId)`), not the 200.
+
+Known mutations: `AssociateTagToCampaign(input: {campaignId, tagId})` —
+activates one tag value in one campaign (what the Customize → Info → Edit Info
+checkboxes fire); `UpdateEmail(input: {entityId, campaignId, emailId,
+changes: {email, emailType, status, subscribe}})` — edits a contact email
+(there is NO delete-email affordance anywhere, UI or GraphQL menu — only
+address rewrite and status flags).
+
+**Campaign-scoped authorization:** entity mutations require the entity to be a
+member of the `campaignId` you pass ("This entity is not accessible…").
+For campaign-less entities (post-dedup residue), use the temporary loop:
+`update_entity_with_tags(campaign_uuid, entity_id, [])` to connect → GraphQL
+edit → `delete_person(campaign_uuid, entity_id)` to remove → log both ops to
+sync_log (`connect_entity` / `remove_from_campaign`) so the removal-gap
+overlay stays correct.
+
+## Field/response activation model (learned 2026-08-07)
+
+Sections (tag_groups), fields (tag_categories), and values (tags) are
+network-level objects; campaigns **activate** them (junction tables
+`campaigns_tag_groups` / `campaigns_tag_categories` / `campaigns_tags`).
+Activation is per tag VALUE; checking a response in Customize → Info → Edit
+Info fires one `AssociateTagToCampaign` per value and cascades the field/
+section on. A signup-helper write to a value not activated in the target
+campaign returns 200 and silently drops — the VA/DC and Soapboxx incidents.
+The `phantom_tag_writes` dbt model detects this class network-wide.
+
 ## Safety and PII
 
 - **UI actions are live production edits.** Same discipline as sync ops:
@@ -92,6 +136,12 @@ with sync_playwright() as pw:
 - Screenshots, traces, and MCP output land under `~/.ab-ui/` — **never inside
   the repo** (AB pages are row-level PII; the repo is org-visible). The MCP is
   registered with `--output-dir C:\Users\RobKerth\.ab-ui\mcp-output`.
+- ⚠️ **`--output-dir` does NOT apply to explicit `filename` arguments** on
+  `browser_snapshot` / `browser_take_screenshot`: a relative filename resolves
+  against the MCP server's cwd — the repo root. Always pass an absolute path
+  under `~/.ab-ui/mcp-output`, or omit `filename` (auto-saved files do land in
+  the output dir). Grep the auto-saved `page-*.yml` for element refs instead of
+  re-snapshotting into context.
 - The storage-state file is a credential. It stays in `~/.ab-ui/`, outside the
   repo and OneDrive.
 
