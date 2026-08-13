@@ -104,7 +104,14 @@ flow you've done once, replaying the captured mutation beats UI clicking:
 
 Known mutations: `AssociateTagToCampaign(input: {campaignId, tagId})` —
 activates one tag value in one campaign (what the Customize → Info → Edit Info
-checkboxes fire); `UpdateEmail(input: {entityId, campaignId, emailId,
+checkboxes fire); `addTagCategoryToCampaign(input: {campaignId, tagCategoryId})`
+(inverse `removeTagCategoryFromCampaign`) — enables a FIELD in a campaign,
+which is what gates profile rendering + search-picker visibility, **including
+for universal fields** (learned 2026-08-13: ⚠️ the field-level checkbox in
+Customize → Info is INERT for universal fields — toggles visually, fires no
+mutation, doesn't persist; use the mutation). GraphQL introspection is enabled
+(`{ __schema { mutationType { fields { name } } } }`) — use it to find more.
+`UpdateEmail(input: {entityId, campaignId, emailId,
 changes: {email, emailType, status, subscribe}})` — edits a contact email
 (there is NO delete-email affordance anywhere, UI or GraphQL menu — only
 address rewrite and status flags).
@@ -127,6 +134,20 @@ Info fires one `AssociateTagToCampaign` per value and cascades the field/
 section on. A signup-helper write to a value not activated in the target
 campaign returns 200 and silently drops — the VA/DC and Soapboxx incidents.
 The `phantom_tag_writes` dbt model detects this class network-wide.
+
+Universal-field refinement (learned 2026-08-13 during taxonomy experiments):
+universal WRITES always land (even with zero enablement anywhere), but each
+campaign still needs the FIELD enabled (`campaigns_tag_categories` /
+GraphQL `isInCampaign`) for the field to render on profiles and appear in the
+search picker. Universal-field VALUES auto-enable wherever their field is
+enabled (their response checkboxes render disabled-checked). A new universal
+field starts enabled in ZERO campaigns; new campaigns start with zero
+enablement rows even for pre-existing universal sections. Enable via
+`addTagCategoryToCampaign` (the UI checkbox is inert for universal fields —
+see Known mutations above). So universal fields fail VISIBLE-side
+(data lands, UI hides it) where campaign-local fields fail WRITE-side
+(200 + silent drop). Audit query: LEFT JOIN universal tag_categories against
+campaigns_tag_categories and look for missing campaigns.
 
 ## Safety and PII
 
