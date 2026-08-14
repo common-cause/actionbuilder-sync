@@ -53,7 +53,19 @@
 | Trainings > Organizing For Power | 29 | Organizing Basics = 91, Rapid Response Basics = 92, Relational Organizing = 93, Storytelling = 94 |
 | Engagement > Prospect Identification | 22 | Hot Prospect = 75 |
 | Participation (legacy, sync-written) | 6/7/16/18/21/28 | 40, 41, 43, 42, 60, 65, 73, 74, 64, 90 |
-| *(new Activity / Interests / Top Performers / Local Groups objects)* | *capture at creation in §B/§C* | |
+| **Activity** (universal section, group id **13**; created 2026-08-13) > First Event Attended (Date) | 32 | 101 |
+| Activity > Most Recent Event Attended (Date) | 33 | 102 |
+| Activity > Events Attended (Past 6 Months) (Number) | 34 | 103 |
+| Activity > Action Network Actions (Past 6 Months) (Number) | 35 | 104 |
+| Activity > State Action Network Actions (Past 6 Months) (Number) | 36 | 105 |
+| Activity > NewMode Actions (All Time) (Number) | 37 | 106 |
+| Activity > Soapboxx Stories (All Time) (Number) | 38 | 107 |
+| Activity > Phone Bank Calls Made (All Time) (Number) | 39 | 108 |
+| **Interests** (universal section, group id **14**; created 2026-08-14) > Volunteer Interests (Standard, multi) | 40 | Phone Banking 109 · Poll Monitoring 110 · Poll Worker 111 · Canvassing 112 · Event Volunteering 113 · Legal Monitoring 114 · Electoral Count Monitoring 115 · Clerk & BOE Outreach (LEAP) 116 · Election Day EP Volunteering 117 · Petition Signature Gathering 118 · EP Swag Captain (2026) 119 *(all prefixed `Interest: `)* |
+| Interests > Issue Interests (Standard, multi) | 41 | `Issue: ` Voting & Fair Representation 120 · Accountability & Anti-Corruption 121 · Civil Rights & Civil Liberties 122 |
+| **Engagement > Top Performers** (campaign-local, Standard multi, readonly like its sync-owned sibling cat 22) | 42 | Top State Action Taker = 123, Top National Action Network Activist = 124 *(activated campaigns 1–25)* |
+| **Local Groups** (campaign-local section, group id **15**) > Nebraska Regional Groups | 43 | NE Group: Lincoln 125 · Omaha 126 · District 8 127 *(activated campaign 2 only)* |
+| Local Groups > PA Action Team | 44 | PA Action Team Member = 128 *(activated campaign 3 only)* |
 
 ### Mechanics cheat-sheet (all E-verified — proposal §3)
 
@@ -64,6 +76,12 @@
 - **Renames preserve interact_id + taggings.** Sync writes by NAME → every rename of a sync-written value pairs with its code change, same day, before 10 PM ET.
 - **Archive hides from search**; archive-only cleanup, no mass deletes.
 - **GraphQL replay:** in-page `fetch('/api/graphql')` with devise-token-auth headers from localStorage (`accessToken`, `client`, `uid`, `token-type: Bearer`) — see `docs/ab_ui_automation.md`. Introspection is enabled if a mutation is unknown.
+- **Taxonomy objects can be created by GraphQL, not just by UI clicking** (proven in Block C — 2 fields + 14 values + 52 enablements in three calls):
+  - `createTagCategory(input: {name, tagGroupId, multiselectable!, locked!, allowToCreateTagType!, multiselectSameTagBehavior, readonly, attachmentsEnabled, isUniversal})` — `allowToCreateTagType` ∈ `Standard|Number|Date|Notes|Address|Signature|Shift`; `multiselectSameTagBehavior` ∈ `append|overwrite` (**`overwrite` = the UI's "Allow multiple of the same response? → Don't Allow"**).
+  - `createTag(input: {name, tagCategoryId, tagType, campaignId?})` — `tagType` matches the field's type.
+  - `createTagGroup(input: {name, targetType, targetTypeId, isUniversal})` — the two `target*` args are unresolved; **create SECTIONS in the UI** (`/admin/fields` → + Add Section) and everything below them via GraphQL.
+  - Read-back queries: `getTagGroups { nodes { id name isUniversal categories { id name locked multiselectable readonly allowToCreateTagType tags { id name tagType archived } } } }`, and `getTagCategoryById(tagCategoryId: "<id>")` — note the arg is **`tagCategoryId`**, not `id`. `associatedCampaignIds` on a category/tag shows current activation without waiting for BQ.
+  - **Always mirror a live reference field of the same kind** (cat 24 universal standard-multi; cat 22 sync-owned campaign-local) and verify the mutation's echoed settings — creation-time-only options (universality, type, single-vs-multi) cannot be fixed later.
 
 ### Pre-flight, every session
 
@@ -140,7 +158,7 @@ GROUP BY 1 ORDER BY 1;
 
 ---
 
-## Block A — Enablement backfill (approved by Rob 2026-08-13; no code; ~30 min)
+## Block A — Enablement backfill — ✅ EXECUTED 2026-08-13 (134 mutations, all `isInCampaign: true`; V4 OFP render verified on entity 56592/Indiana; V2 zero post-nightly; GraphQL re-read spot-checks true 2026-08-14 — BQ V1 still pending replication)
 
 1. `addTagCategoryToCampaign` replay (snippet above):
    - cat **29** (Trainings > OFP) → all 26 campaigns *(currently enabled NOWHERE — the invisibility fix)*
@@ -153,7 +171,7 @@ Rollback: `removeTagCategoryFromCampaign`, same shape.
 
 ---
 
-## Block B — Create the Activity section (8 single-select fields) + date-type check (~45 min)
+## Block B — Create the Activity section (8 single-select fields) + date-type check — ✅ EXECUTED 2026-08-13/14 (section universal, group id 13; ids in §0; **E5 PASS** — date replace-on-write verified on Testy, test tagging UI-removed + API-verified gone; all 8 cats enabled × 26 campaigns, 208 mutations true; V4 Activity render verified on Testy/Test)
 
 1. `/admin/fields` → **+ Add Section** → name `Activity`, **universal** (this is our first section creation — if the universal option does NOT appear at section creation, STOP and investigate; everything downstream assumes it).
 2. Create 8 fields, each: **type per table, Single select, "Allow any user to add new responses" OFF** (locked), read-only OFF. Then one response each, named exactly:
@@ -176,7 +194,17 @@ Rollback: `removeTagCategoryFromCampaign`, same shape.
 
 ---
 
-## Block C — Interests, Top Performers, Local Groups (~45 min)
+## Block C — Interests, Top Performers, Local Groups — ✅ EXECUTED 2026-08-14 (ids in §0; Interests cats 40/41 enabled ×26 = 52 true; 51 value activations true; V2 zero; scoping verified both ways — NE profile shows Nebraska Regional Groups and NOT PA Action Team, PA profile the inverse)
+
+> **Sections were created in the UI; fields/values/activations via GraphQL** (`createTagCategory` / `createTag` / `associateTagToCampaign` — input shapes in the mechanics notes below). Each new field's settings were mirrored from a live reference field of the same kind (cat 24 for universal standard-multi, cat 22 for sync-owned campaign-local) and read back from the mutation response.
+>
+> **Two judgment calls made during execution — flag if either is wrong:**
+> 1. **`Top Performers` created `readonly: true`**, matching its sync-owned sibling Prospect Identification (cat 22). Organizers see the flags, admins/API write them. Precedent says API writes are unaffected (cat 22 is readonly and takes nightly Hot Prospect writes).
+> 2. **Local Groups fields created MULTI-select** (legacy `Nebraska Regional Group` was single). Group membership is naturally a set, multiselect can express single but not vice-versa, and select mode is creation-time-only. All four values are removable (campaign-local ⇒ true delete).
+>
+> Also found: legacy `Nebraska Regional Group` (cat 17) is `locked: false` — that unlocked field is how organizers created the three District-8 variants. All new fields are `locked: true`.
+>
+> **Hot Prospect (tag 75) was already activated in VA/DC** by the 2026-08-07 Phase 0 remediation, so step 3 reduced to Test (campaign 1) only — done.
 
 1. **Interests** (universal section — D3): create section `Interests`, universal. Fields, both **Standard · Multi select** (people hold several; humans remove via UI per E1), locked OFF? — keep **locked ON** (only admins add new response options; organizers still apply/remove them on people):
    - `Volunteer Interests`: Interest: Phone Banking · Interest: Poll Monitoring · Interest: Poll Worker · Interest: Canvassing · Interest: Event Volunteering · Interest: Legal Monitoring · Interest: Electoral Count Monitoring · Interest: Clerk & BOE Outreach (LEAP) · Interest: Election Day EP Volunteering · Interest: Petition Signature Gathering · Interest: EP Swag Captain (2026)
