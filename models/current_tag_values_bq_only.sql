@@ -94,10 +94,10 @@ SELECT
     WHEN tag_name = 'Soapboxx Stories'                        THEN 'Participation:|:Storytelling:|:Soapboxx Stories:|:number_response'
     WHEN tag_name = 'Top National Action Network Activist'    THEN 'Participation:|:National Online Actions:|:Top National Action Network Activist:|:standard_response'
     WHEN tag_name = 'Hot Prospect'                            THEN 'Engagement:|:Prospect Identification:|:Hot Prospect:|:standard_response'
-    WHEN tag_name = 'Organizing Basics'                       THEN 'Trainings:|:Organizing For Power:|:Organizing Basics:|:standard_response'
-    WHEN tag_name = 'Storytelling'                            THEN 'Trainings:|:Organizing For Power:|:Storytelling:|:standard_response'
-    WHEN tag_name = 'Relational Organizing'                   THEN 'Trainings:|:Organizing For Power:|:Relational Organizing:|:standard_response'
-    WHEN tag_name = 'Rapid Response Basics'                   THEN 'Trainings:|:Organizing For Power:|:Rapid Response Basics:|:standard_response'
+    WHEN tag_name = 'OFP Training: Organizing Basics'         THEN 'Trainings:|:Organizing For Power:|:OFP Training: Organizing Basics:|:standard_response'
+    WHEN tag_name = 'OFP Training: Storytelling'              THEN 'Trainings:|:Organizing For Power:|:OFP Training: Storytelling:|:standard_response'
+    WHEN tag_name = 'OFP Training: Relational Organizing'     THEN 'Trainings:|:Organizing For Power:|:OFP Training: Relational Organizing:|:standard_response'
+    WHEN tag_name = 'OFP Training: Rapid Response Basics'     THEN 'Trainings:|:Organizing For Power:|:OFP Training: Rapid Response Basics:|:standard_response'
     ELSE CONCAT(tag_name, ':|:', tag_type, '_response')
   END as sync_field_identifier
 

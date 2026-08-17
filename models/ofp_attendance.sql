@@ -59,16 +59,30 @@ current_ofp_tags AS (
   -- sync_log rows carry the old interact_ids. Keying on the new universal interact_ids
   -- makes "already has it" detection see only the new field, so existing attendees
   -- get (re)written to the universal field exactly once.
+  --
+  -- The interact_id is ALSO the canonical source for the name we join on below.
+  -- Renames preserve interact_ids but not names, and the names reaching us here are
+  -- stale in two ways after a rename: the BQ snapshot keeps the old name until
+  -- replication catches up, and historical sync_log rows keep whatever name was
+  -- current when they were written. Deriving the name from the interact_id instead
+  -- of passing tag_name through keeps the idempotency join stable across renames —
+  -- otherwise every existing tagging looks "missing" and gets re-written once.
+  -- Names below must match seeds/ofp_training_map.csv exactly.
   SELECT
     entity_id,
     campaign_id,
-    tag_name as ofp_tag
+    CASE tag_interact_id
+      WHEN 'c06f0496-d59a-4b8f-971e-2aeaea8c8582' THEN 'OFP Training: Organizing Basics'
+      WHEN '0e1102dc-bf89-4c06-9ff6-c74d77efc317' THEN 'OFP Training: Storytelling'
+      WHEN '282b2017-54a5-41bc-b52c-7863e598950d' THEN 'OFP Training: Relational Organizing'
+      WHEN '1ef15001-e59c-4d3d-92fd-7eb001ee9c46' THEN 'OFP Training: Rapid Response Basics'
+    END as ofp_tag
   FROM {{ ref('current_tag_values') }}
   WHERE tag_interact_id IN (
-    'c06f0496-d59a-4b8f-971e-2aeaea8c8582',  -- Organizing Basics
-    '0e1102dc-bf89-4c06-9ff6-c74d77efc317',  -- Storytelling
-    '282b2017-54a5-41bc-b52c-7863e598950d',  -- Relational Organizing
-    '1ef15001-e59c-4d3d-92fd-7eb001ee9c46'   -- Rapid Response Basics
+    'c06f0496-d59a-4b8f-971e-2aeaea8c8582',  -- OFP Training: Organizing Basics
+    '0e1102dc-bf89-4c06-9ff6-c74d77efc317',  -- OFP Training: Storytelling
+    '282b2017-54a5-41bc-b52c-7863e598950d',  -- OFP Training: Relational Organizing
+    '1ef15001-e59c-4d3d-92fd-7eb001ee9c46'   -- OFP Training: Rapid Response Basics
   )
 )
 

@@ -220,6 +220,13 @@ new_from_sync AS (
       WHEN sot.tag_name = 'Soapboxx Stories'                        THEN 'Participation:|:Storytelling:|:Soapboxx Stories:|:number_response'
       WHEN sot.tag_name = 'Top National Action Network Activist'    THEN 'Participation:|:National Online Actions:|:Top National Action Network Activist:|:standard_response'
       WHEN sot.tag_name = 'Hot Prospect'                            THEN 'Engagement:|:Prospect Identification:|:Hot Prospect:|:standard_response'
+      -- OFP universal responses (renamed 2026-08-17, taxonomy Block D). These
+      -- branches were previously missing here but present in the _bq_only twin;
+      -- added to close that drift.
+      WHEN sot.tag_name = 'OFP Training: Organizing Basics'         THEN 'Trainings:|:Organizing For Power:|:OFP Training: Organizing Basics:|:standard_response'
+      WHEN sot.tag_name = 'OFP Training: Storytelling'              THEN 'Trainings:|:Organizing For Power:|:OFP Training: Storytelling:|:standard_response'
+      WHEN sot.tag_name = 'OFP Training: Relational Organizing'     THEN 'Trainings:|:Organizing For Power:|:OFP Training: Relational Organizing:|:standard_response'
+      WHEN sot.tag_name = 'OFP Training: Rapid Response Basics'     THEN 'Trainings:|:Organizing For Power:|:OFP Training: Rapid Response Basics:|:standard_response'
       ELSE CONCAT(sot.tag_name, ':|:standard_response')
     END AS sync_field_identifier
   FROM sync_only_tags sot

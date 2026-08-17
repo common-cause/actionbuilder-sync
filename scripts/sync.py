@@ -143,20 +143,24 @@ INSERT_TAG_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
 #
 # The "Trainings > Organizing For Power" field is a UNIVERSAL field (one
 # network-level tag object per response, shared across all campaigns). It
-# replaced the archived campaign-local "Activism > Organizing For Power" field,
-# whose responses share the same names. Until the archive + new field replicate
-# to BQ, _get_tag_map() (which reads cln_actionbuilder__tags WHERE status=1)
-# still returns the OLD ids for these names. We override with the new universal
-# ids so add_tagging rows logged to sync_log carry the correct interact_id, which
-# keeps the current_tag_values overlay — and thus OFP idempotency — correct from
-# the first run. The only tags with these names are the OFP responses, so the
-# override is unambiguous. Source of truth: live AB API, verified 2026-06-16.
+# replaced the archived campaign-local "Activism > Organizing For Power" field
+# (tag category 23, responses 76-79), which still reads status=1 in BQ even
+# though AB reports it archived. _get_tag_map() (which reads
+# cln_actionbuilder__tags WHERE status=1) therefore sees two tags per response
+# name and can return the OLD id. We override with the new universal ids so
+# add_tagging rows logged to sync_log carry the correct interact_id, which keeps
+# the current_tag_values overlay — and thus OFP idempotency — correct.
+#
+# Keys are the LIVE response names. Renamed 2026-08-17 (taxonomy Block D) to the
+# `OFP Training: ` prefix; the archived cat-23 responses keep the old bare names,
+# so these keys are now unambiguous by construction. The UUIDs are unchanged —
+# renames preserve interact_ids. Source of truth: live AB, re-verified 2026-08-17.
 # ---------------------------------------------------------------------------
 OFP_UNIVERSAL_TAG_IDS: Dict[str, str] = {
-    'Organizing Basics':     'c06f0496-d59a-4b8f-971e-2aeaea8c8582',
-    'Storytelling':          '0e1102dc-bf89-4c06-9ff6-c74d77efc317',
-    'Relational Organizing': '282b2017-54a5-41bc-b52c-7863e598950d',
-    'Rapid Response Basics': '1ef15001-e59c-4d3d-92fd-7eb001ee9c46',
+    'OFP Training: Organizing Basics':     'c06f0496-d59a-4b8f-971e-2aeaea8c8582',
+    'OFP Training: Storytelling':          '0e1102dc-bf89-4c06-9ff6-c74d77efc317',
+    'OFP Training: Relational Organizing': '282b2017-54a5-41bc-b52c-7863e598950d',
+    'OFP Training: Rapid Response Basics': '1ef15001-e59c-4d3d-92fd-7eb001ee9c46',
 }
 
 # ---------------------------------------------------------------------------
@@ -1240,6 +1244,10 @@ def snapshot_tag_state(
         'Action Network State Actions', 'Top State Action Taker',
         'Phone Bank Calls Made', 'NewMode Actions',
         'Top National Action Network Activist', 'Hot Prospect',
+        'Soapboxx Stories',
+        # OFP universal responses (renamed 2026-08-17, taxonomy Block D)
+        'OFP Training: Organizing Basics', 'OFP Training: Storytelling',
+        'OFP Training: Relational Organizing', 'OFP Training: Rapid Response Basics',
     }
 
     for i, row in enumerate(rows, 1):
