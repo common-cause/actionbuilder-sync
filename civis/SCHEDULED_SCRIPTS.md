@@ -23,6 +23,38 @@ when upgrading. (`python-dotenv` comes with it as a base dependency.)
 script's own run*, not at workflow start. So a push to `master` mid-workflow is
 picked up by any step that hasn't started yet (and by every step on the next run).
 
+### ⚠️ Docker image tag — PIN IT, never use `latest`
+
+The container image (`civisanalytics/datascience-python`) and its tag are set
+**per script in the Civis UI**, not in this repo — so image drift is invisible to
+version control and to code review. Every job must be pinned to an explicit tag.
+
+This bit us hard: the jobs ran on `latest`, and on **2026-07-13 19:07 UTC** that tag
+rolled to **9.0.0, which moved Python 3.13.13 → 3.14.6**. The very next nightly died
+in step 0 at `import dbt` (`mashumaro ... UnserializableField: Field "schema" ...`),
+the `on-success` transition halted the workflow, **and the nightly wrote nothing to
+ActionBuilder for the next five weeks** before anyone noticed.
+
+dbt cannot run on Python 3.14 today, and no pin fixes that:
+
+| | |
+|---|---|
+| dbt-core 1.11.6 mashumaro pin | `mashumaro[msgpack]<3.15,>=3.9` |
+| First mashumaro supporting Python 3.14 | 3.17 |
+| dbt-core 1.11.6 Python classifiers | 3.10–3.13 |
+| dbt-bigquery 1.12.0 (latest) classifiers | 3.10–3.13 |
+
+Upgrading dbt is **not** a workaround — the BigQuery adapter hasn't declared 3.14
+support either. The fix is the image tag.
+
+Known-good tags: **`8.5.0` → Python 3.13.13** (org standard; inside dbt 1.11.6's
+supported range — this is the pin to use). `8.2.0` → Python 3.12.8 if you ever want
+exact parity with local dev (3.12.5). Avoid `9.x` until dbt-bigquery ships 3.14 support.
+
+Pin **all eight** jobs, not just `run_dbt` — because step 0 halted first, steps 1–7
+were never exercised on 9.0.0, so `ccef-connections` + `sync.py` on Python 3.14 is
+unproven. Bump the tag deliberately, together, and verify a run afterward.
+
 ## Workflows
 
 ### Nightly ActionBuilder Update
