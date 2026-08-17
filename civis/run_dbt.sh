@@ -19,4 +19,11 @@ pip install "dbt-core==1.11.6" "dbt-bigquery==1.11.0" "python-dotenv>=1.0"
 
 # run_dbt.py loads BIGQUERY_CREDENTIALS_PASSWORD (a Civis job env var here; .env locally),
 # writes it to a temp keyfile, and runs dbt with the project's profiles.yml. Builds every model.
-python app/run_dbt.py run
+#
+# Retry once on failure. A transient BigQuery 500 against ANY single model exits dbt
+# non-zero, and the workflow's on-success transition then halts all eight steps — which
+# is exactly what killed the 2026-08-17 run: a `backendError` on test_campaign_update_summary,
+# a leaf dashboard model with no downstream dependents, took the whole nightly down.
+# `dbt retry` re-runs only the failed/skipped nodes recorded in target/run_results.json,
+# so a blip self-heals; a genuine breakage fails both times and still halts the workflow.
+python app/run_dbt.py run || python app/run_dbt.py retry
