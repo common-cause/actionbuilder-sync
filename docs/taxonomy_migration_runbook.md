@@ -217,7 +217,15 @@ Rollback: `removeTagCategoryFromCampaign`, same shape.
 
 ---
 
-## Block D — Rename day: OFP values (+ code, same day, BEFORE 10 PM ET)
+## Block D — Rename day: OFP values (+ code, same day, BEFORE 10 PM ET) — ✅ EXECUTED 2026-08-17 (commit `84bf334`)
+
+> Renames done by **GraphQL `updateTag(input: {tagId, name})`** — no UI clicking needed (input also takes optional `tagType`/`archived`; omitting them leaves them untouched, verified on tag 92 first). Read-back confirmed all four renamed with `tagType`, `archived: false`, cat-29 universality/multi/`overwrite`/locked and all 26 campaign enablements unchanged; live API on a Georgia entity returned the new names on existing taggings (E4 re-confirmed in production).
+>
+> **Deviation from the spec below — `ofp_attendance` was NOT a comment-only edit.** Its idempotency join compared `tag_name`, not the `tag_interact_id` it filters on, so post-rename every existing tagging looked "missing". Measured: the name-only join matched **0 of 1,452** rows after the rename (the accepted "re-add once" quirk was really a full-feed re-emit). `current_ofp_tags` now derives the value name from the interact_id via CASE, so the join is rename-proof; feed stayed at its pre-rename **720** rows. Future renames of these values need only the seed + CASE literals kept in step.
+>
+> Also verified: the new names contain `: ` but never the `:|:` delimiter, so `parse_sync_string` (splits on `:|:`, then `parts[3].split(':', 1)`) and `_extract_tag_info` round-trip them correctly; a live canary write of `OFP Training: Rapid Response Basics` to Testy (Test campaign) landed on interact_id `1ef15001-…`. V2 phantom_tag_writes = 0. Testy keeps that canary tagging (universal ⇒ API-undeletable; UI-removable if wanted).
+>
+> ⚠️ **Discovered during verification, unrelated to Block D: the nightly sync has written nothing since 2026-07-13.** `sync_log` shows `add_tagging`/`insert_entity`/`set_assessment` stopping after 2026-07-13; everything logged since (7/29, 7/30, 8/07) is manual ops. Upstream is healthy — Mobilize participations current to 8/17, AB entity mirror updating to 8/16 — so this is the Civis workflow (#119217) not running or failing before it writes, not a data problem. Block D's "next morning" checks below assume a nightly that runs; they cannot pass until this is resolved. Separately, before it stopped the OFP feed was in a **churn loop** — the identical 483 taggings (192/147/144, never `Rapid Response Basics`) rewritten every night without draining — worth diagnosing when the nightly is restored.
 
 UI renames in Trainings > Organizing For Power (E4-safe; interact_ids survive):
 `Organizing Basics` → `OFP Training: Organizing Basics` · `Storytelling` → `OFP Training: Storytelling` · `Relational Organizing` → `OFP Training: Relational Organizing` · `Rapid Response Basics` → `OFP Training: Rapid Response Basics`
