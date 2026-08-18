@@ -39,13 +39,19 @@ ofp_entity_tags AS (
 ),
 
 entities_in_campaigns AS (
-  -- All entities in active campaigns
+  -- All entities in active campaigns. interact_ids are carried through so the
+  -- removed-entity anti-join below can match removed_campaign_entities, which is
+  -- keyed on interact_ids (it is built from sync_log).
   SELECT
     ce.entity_id,
-    ce.campaign_id
+    ce.campaign_id,
+    e.interact_id AS entity_interact_id,
+    c.interact_id AS campaign_interact_id
   FROM actionbuilder_cleaned.cln_actionbuilder__campaigns_entities ce
   INNER JOIN actionbuilder_cleaned.cln_actionbuilder__campaigns c
     ON ce.campaign_id = c.id
+  INNER JOIN actionbuilder_cleaned.cln_actionbuilder__entities e
+    ON e.id = ce.entity_id
   WHERE c.status = 'active'
 ),
 
@@ -68,9 +74,16 @@ current_ofp_tags AS (
   -- of passing tag_name through keeps the idempotency join stable across renames —
   -- otherwise every existing tagging looks "missing" and gets re-written once.
   -- Names below must match seeds/ofp_training_map.csv exactly.
-  SELECT
+  --
+  -- NOTE THE GRAIN: (entity, tag) — deliberately NOT per campaign. "Organizing For
+  -- Power" is a UNIVERSAL field: one network-level tag object per response, shared
+  -- across every campaign. A tagging recorded under campaign X is returned by the API
+  -- when reading the entity through campaign Y (verified 2026-08-18 against campaign 26:
+  -- entities the per-campaign version reported as missing already had every competency).
+  -- Grouping by campaign therefore invented work that did not exist — 219 rows for the
+  -- Organizing Team campaign that no sync step processes and that could never drain.
+  SELECT DISTINCT
     entity_id,
-    campaign_id,
     CASE tag_interact_id
       WHEN 'c06f0496-d59a-4b8f-971e-2aeaea8c8582' THEN 'OFP Training: Organizing Basics'
       WHEN '0e1102dc-bf89-4c06-9ff6-c74d77efc317' THEN 'OFP Training: Storytelling'
@@ -102,8 +115,19 @@ SELECT
 FROM ofp_entity_tags oet
 INNER JOIN entities_in_campaigns eic
   ON oet.entity_id = eic.entity_id
+
+-- Network-level anti-join (no campaign_id term) — see current_ofp_tags above.
+-- A competency the entity already holds anywhere is not missing here.
 LEFT JOIN current_ofp_tags cot
   ON oet.entity_id = cot.entity_id
-  AND eic.campaign_id = cot.campaign_id
   AND oet.ofp_tag = cot.ofp_tag
+
+-- Entities removed from a campaign still appear in campaigns_entities forever
+-- (hard deletes never replicate), so without this the feed emits rows that write
+-- as 404 "Entity is not accessible".
+LEFT JOIN {{ ref('removed_campaign_entities') }} rem
+  ON rem.entity_interact_id = eic.entity_interact_id
+ AND rem.campaign_interact_id = eic.campaign_interact_id
+
 WHERE cot.entity_id IS NULL
+  AND rem.entity_interact_id IS NULL
