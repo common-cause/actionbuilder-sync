@@ -177,7 +177,9 @@ ActionBuilder Sync/
 │   ├── create_suppression_list.sql   # One-time DDL for suppression_list table (already run)
 │   ├── add_suppression.py      # Add a person to the do-not-sync suppression list
 │   ├── agent_resolve_dedup.py  # Weekly agent pass helper: evidence pull + decision writer
-│   └── run_weekly_dedup.ps1    # Task Scheduler wrapper for the weekly dedup agent
+│   ├── run_weekly_dedup.ps1    # Task Scheduler wrapper for the weekly dedup agent
+│   ├── check_sync_freshness.py # Dead-man's check: did last night's sync run?
+│   └── run_sync_freshness_check.ps1  # Task Scheduler wrapper + alerting for the above
 │
 ├── evidence/                   # Output from evidence scripts (March 2026 JSON/TXT reports, committed)
 │
@@ -279,6 +281,27 @@ entry `local-scheduled-claude-agents-task-scheduler-the-pattern-for-recurring-ag
   Run logs: `logs/weekly_dedup_<date>.log` (gitignored). MERGE decisions accumulate in
   `dedup_candidates` until the next human-supervised removal pass (contact migration →
   `remove_records`) — the agent never removes anything.
+
+- **"ActionBuilder Sync - freshness check"** (Task Scheduler, daily 9:00 AM local,
+  registered 2026-08-18): dead-man's check answering "did last night's sync actually
+  run?" — `scripts/run_sync_freshness_check.ps1` → `scripts/check_sync_freshness.py`.
+  Not an agent; plain deterministic SQL. It lives here rather than on Civis **on
+  purpose**: a monitor hosted on the platform it watches shares fate with it. When the
+  nightly died on 2026-07-13 a Civis-hosted check would have been just as dead, which is
+  why nobody noticed for five weeks.
+
+  Primary signal is **view freshness** — nightly step 0 runs `dbt run`, which recreates
+  all ~48 views unconditionally every night whether or not there is work to do. The check
+  requires that rebuild to have happened *after* the nightly was due (02:00 UTC), not
+  merely "recently", so a local `bash dbt.sh run` during the day cannot mask a nightly
+  that never ran. Secondary signals (warning only): `sync_log` recency — a genuinely
+  no-work night writes nothing — plus a 24h error-count spike and any
+  `phantom_tag_writes` rows.
+
+  On failure it writes `logs/SYNC_ALERT.txt` (deleted again on the next healthy run, so
+  its presence always means a live problem) and emails Rob via Outlook COM. The email is
+  best-effort and wrapped in try/catch — a mail failure must never swallow the alert,
+  which is already on disk and in `logs/sync_freshness_<date>.log` (gitignored).
 
 ---
 
