@@ -254,5 +254,24 @@ SELECT
 
 FROM recommended r
 LEFT JOIN entity_interact_ids eii ON eii.entity_id_int = r.entity_id
+
+-- Hard deletes never replicate to BQ (campaigns_entities removals carry no
+-- updated_at change), so cln_actionbuilder__campaigns_entities still lists every
+-- entity we have ever removed. Without this anti-join the feed keeps recommending
+-- assessments for them and apply_assessments 404s with "Entity is not accessible"
+-- on every run — 17 such errors on 2026-08-18. Harmless individually, but a
+-- nightly that always reports errors is one where a real error hides.
+LEFT JOIN {{ ref('removed_campaign_entities') }} rem
+  ON rem.entity_interact_id = eii.entity_interact_id
+ AND rem.campaign_interact_id = r.campaign_interact_id
+
+-- Never write to someone on the curated do-not-sync list. No overlap today, but
+-- the other write paths (both insert feeds, OT connects) already guard this and
+-- assessments should not be the one that does not.
+LEFT JOIN {{ ref('suppressed_entities') }} sup
+  ON sup.entity_interact_id = eii.entity_interact_id
+
 WHERE r.recommended_level > COALESCE(r.current_level, 0)
+  AND rem.entity_interact_id IS NULL
+  AND sup.entity_interact_id IS NULL
 ORDER BY r.campaign_id, r.entity_id
