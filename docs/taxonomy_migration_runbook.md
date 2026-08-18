@@ -225,7 +225,13 @@ Rollback: `removeTagCategoryFromCampaign`, same shape.
 >
 > Also verified: the new names contain `: ` but never the `:|:` delimiter, so `parse_sync_string` (splits on `:|:`, then `parts[3].split(':', 1)`) and `_extract_tag_info` round-trip them correctly; a live canary write of `OFP Training: Rapid Response Basics` to Testy (Test campaign) landed on interact_id `1ef15001-…`. V2 phantom_tag_writes = 0. Testy keeps that canary tagging (universal ⇒ API-undeletable; UI-removable if wanted).
 >
-> ⚠️ **Discovered during verification, unrelated to Block D: the nightly sync has written nothing since 2026-07-13.** `sync_log` shows `add_tagging`/`insert_entity`/`set_assessment` stopping after 2026-07-13; everything logged since (7/29, 7/30, 8/07) is manual ops. Upstream is healthy — Mobilize participations current to 8/17, AB entity mirror updating to 8/16 — so this is the Civis workflow (#119217) not running or failing before it writes, not a data problem. Block D's "next morning" checks below assume a nightly that runs; they cannot pass until this is resolved. Separately, before it stopped the OFP feed was in a **churn loop** — the identical 483 taggings (192/147/144, never `Rapid Response Basics`) rewritten every night without draining — worth diagnosing when the nightly is restored.
+> ✅ **RESOLVED 2026-08-18 — the nightly ran and Block D's deferred checks all passed.** The 2026-08-18 run wrote 43,647 `add_tagging` / 39,738 `delete_tagging` / 1,294 `insert_entity` (the big delete count is normal replace-on-write churn for number fields after a five-week gap). V2 `phantom_tag_writes` = **0**, and OFP writes landed under the NEW names (`OFP Training: Organizing Basics` 198, `Storytelling` 149, `Relational Organizing` 146) — Block D confirmed correct in production.
+>
+> ⚠️ **The OFP churn loop survived the Block D fix and is still running.** Same three values re-added every night (198/147→149/144→146), still never `Rapid Response Basics`, still not draining. The interact_id-keyed `current_ofp_tags` join fixed the *rename* blindness but not this; the writes are harmless (universal multiselect, `overwrite` dedupes) but waste ~490 API calls a night. Diagnose separately — start with whether these entities' taggings are landing at all, or landing in a campaign the read doesn't check.
+>
+> Also from that run, unrelated to taxonomy: **17 `set_assessment` errors** and **463 `delete_tagging` rows with `tag_name` NULL/'None'** — both worth a look.
+>
+> ⚠️ **Original finding (2026-08-17), now historical: the nightly sync had written nothing since 2026-07-13.** `sync_log` shows `add_tagging`/`insert_entity`/`set_assessment` stopping after 2026-07-13; everything logged since (7/29, 7/30, 8/07) is manual ops. Upstream is healthy — Mobilize participations current to 8/17, AB entity mirror updating to 8/16 — so this is the Civis workflow (#119217) not running or failing before it writes, not a data problem. Block D's "next morning" checks below assume a nightly that runs; they cannot pass until this is resolved. Separately, before it stopped the OFP feed was in a **churn loop** — the identical 483 taggings (192/147/144, never `Rapid Response Basics`) rewritten every night without draining — worth diagnosing when the nightly is restored.
 
 UI renames in Trainings > Organizing For Power (E4-safe; interact_ids survive):
 `Organizing Basics` → `OFP Training: Organizing Basics` · `Storytelling` → `OFP Training: Storytelling` · `Relational Organizing` → `OFP Training: Relational Organizing` · `Rapid Response Basics` → `OFP Training: Rapid Response Basics`
@@ -250,9 +256,23 @@ Sequence: code commit ready → UI renames (4) → merge → `bash dbt.sh seed` 
 
 ---
 
-## Block E — Rename day: 1MC values (mostly free — one exception: notes)
+## Block E — Rename day: 1MC values (mostly free — one exception: notes) — ✅ EXECUTED 2026-08-18 (commit `3581930`)
 
 `Leader` → `1MC Leader` · `Participant` → `1MC Participant` (Role, tags 80/82; `1MC Host` done 2026-08-13) · `Total Conversations` value 86 → `1MC Total Conversations` · Conversation Notes 87/88/89 → `1MC Host Conversation Notes` / `1MC Event Attendee Notes` / `1MC Event Host Notes`.
+
+> Six `updateTag(input: {tagId, name})` calls (canary on tag 80 first, then the remaining five). Read-back confirmed all three categories unchanged: universal, locked, correct `allowToCreateTagType`, cat 24/27 multi + cat 26 single, `associatedCampaignIds` still 26/26, nothing archived. Note `updateTag`'s payload has **no `tagCategory` field** — including it fails document validation, which aborts before execution (safe, but costs a round trip).
+>
+> **The notes re-key was real, and measurable.** Executing the compiled `1mc_notes` right after the rename returned **3 rows** — every historical note queued to re-append, exactly as predicted. The three `sync_log` rows were re-keyed with one idempotent `UPDATE` (suffix-matched on `':<old response name>'`, so re-running can't double-prefix) and the model returned to **0**. Post-deploy: 0.
+>
+> **Pre-existing drift this block surfaced and fixed:** `updates_needed.sql:68` and `auto_assessment_rules.sql:111,114` still filtered on `'Host'`, which Block A renamed to `1MC Host` on 2026-08-13 — those reads had been blind for five days. Impact nil (tags 80/81 have zero live taggings, so `has_host_tag` was already always FALSE), but it is the same failure mode this runbook exists to prevent: a Block-A/B/C rename with no code pairing because the value looked unused.
+>
+> Live tagging counts at rename time (why this block was low-risk): 80 Leader **0**, 82 Participant **4**, 86 Total Conversations **4**, 87 **9**, 88 **2**, 89 **2**. The three `million_conversations_*_tag` columns are confirmed absent from `sync.py` `TAG_COLS`, so Role/TC renames cannot race a write path — only `append_notes` is live.
+>
+> `seeds/1mc_training_map.csv` is still header-only, so no `dbt seed` was needed; `1mc_role_attendance.sql` now carries a comment that any future row must use the new names, since `role_tag` is carried verbatim into the sync string.
+>
+> Validation: all six changed models executed via their compiled SQL (per the `dbt compile` lesson), then `dbt.sh run -s <models>+` → PASS=8. Deployed views verified to contain the new names and no old literals. V2 phantom_tag_writes = 0.
+>
+> ⚠️ One authoring gotcha: a `⚠️` emoji in a model comment crashed dbt's console logger on Windows (cp1252) while it echoed the compiled node. Keep model comments ASCII.
 
 Inventory findings that shape this block:
 
@@ -261,6 +281,8 @@ Inventory findings that shape this block:
 - **⚠️ Conversation Notes renames DO race a live path.** `append_notes` reads section/field/response_name from `models/1mc_notes.sql` (lines 57, 92, 121, 179–180) and — the subtle part — its **idempotency key is `{airtable_record_id}:{response_name}` stored in `sync_log.tag_name`** (`1mc_notes.sql:44,187`). Renaming the three response values re-keys every historical note → re-append. Volume is tiny (~11 notes today), so either: (a) accept ~11 duplicate note appends, or (b) same-day `UPDATE actionbuilder_sync.sync_log SET tag_name = REPLACE(...)` to re-key the historical rows. **Do (b)** — it's one statement per response name. Pair the UI renames with the `1mc_notes.sql` literals + the sync_log re-key, same day, before 10 PM.
 
 Verify next morning: `append_notes` step logs 0 appends (no re-key misses), V2 zero.
+
+**Next morning (2026-08-19) check — still open at time of writing:** confirm the `append_notes` step logged **0** appends. Any non-zero count means a re-key miss and those notes were appended twice; the duplicates would need removing by hand.
 
 ---
 
