@@ -108,10 +108,10 @@ stw_by_entity AS (
 mc_roles_by_entity AS (
   SELECT
     entity_id,
-    MAX(CASE WHEN tag_name = 'Host' THEN TRUE ELSE FALSE END) as has_host_tag,
-    MAX(CASE WHEN tag_name = 'Leader' THEN TRUE ELSE FALSE END) as has_leader_tag
+    MAX(CASE WHEN tag_name = '1MC Host' THEN TRUE ELSE FALSE END) as has_host_tag,
+    MAX(CASE WHEN tag_name = '1MC Leader' THEN TRUE ELSE FALSE END) as has_leader_tag
   FROM {{ ref('current_tag_values') }}
-  WHERE tag_name IN ('Host', 'Leader')
+  WHERE tag_name IN ('1MC Host', '1MC Leader')
   GROUP BY entity_id
 ),
 

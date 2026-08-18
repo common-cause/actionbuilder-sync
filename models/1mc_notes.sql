@@ -2,13 +2,22 @@
 -- Formats Airtable text fields into note payloads for append_note API calls.
 --
 -- Three source tables map to three response names:
---   event_reports              → "Event Host Notes"        (on Host's record)
---   event_reports_attendees    → "Event Attendee Notes"    (on Attendee's record)
---   individual_conversation_reports → "Conversation Host Notes" (on Host's record)
+--   event_reports              → "1MC Event Host Notes"     (on Host's record)
+--   event_reports_attendees    → "1MC Event Attendee Notes" (on Attendee's record)
+--   individual_conversation_reports → "1MC Host Conversation Notes" (on Host's record)
+--
+-- Response names renamed 2026-08-18 (taxonomy Block E). The AB FIELD is still
+-- "Conversation Notes" (cat 27) -- only the three responses were renamed.
 --
 -- Each Airtable record produces at most one note, concatenating all non-null
 -- text fields with labels. Idempotency: filter out _airtable_record_id values
 -- already logged in sync_log with operation = 'append_note'.
+--
+-- WARNING: the idempotency key is CONCAT(_airtable_record_id, ':', response_name)
+-- stored in sync_log.tag_name, so renaming a response re-keys history and
+-- would re-append every past note. The three historical sync_log rows were
+-- re-keyed to the new names in the same change (2026-08-18) -- any future
+-- rename of these responses must do the same.
 --
 -- Output columns match what the sync script needs to call ab.append_note().
 
@@ -54,7 +63,7 @@ event_host_notes AS (
   SELECT
     er._airtable_record_id,
     LOWER(TRIM(er.volunteer_email)) as email_normalized,
-    'Event Host Notes' as response_name,
+    '1MC Event Host Notes' as response_name,
     CONCAT(
       COALESCE(CONCAT('Event: ', er.event_name, ', '), ''),
       COALESCE(CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', er.event_date), ', '), ''),
@@ -89,7 +98,7 @@ event_attendee_notes AS (
   SELECT
     era._airtable_record_id,
     LOWER(TRIM(era.friend_family_email)) as email_normalized,
-    'Event Attendee Notes' as response_name,
+    '1MC Event Attendee Notes' as response_name,
     CONCAT(
       COALESCE(CONCAT('Event at ', era.event_location, ', '), ''),
       COALESCE(CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', era.event_date), '. '), ''),
@@ -118,7 +127,7 @@ conversation_host_notes AS (
   SELECT
     icr._airtable_record_id,
     LOWER(TRIM(icr.volunteer_email)) as email_normalized,
-    'Conversation Host Notes' as response_name,
+    '1MC Host Conversation Notes' as response_name,
     CONCAT(
       'Conversation with ', COALESCE(icr.friend_family_name, 'Unknown'),
       COALESCE(CONCAT(', ', icr.conversation_location), ''),

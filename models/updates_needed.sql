@@ -64,10 +64,14 @@ current_ab_values AS (
     'OFP Training: Storytelling',
     'OFP Training: Relational Organizing',
     'OFP Training: Rapid Response Basics',
-    'Leader',
-    'Host',
-    'Participant',
-    'Total Conversations',
+    -- 1MC responses (renamed 2026-08-18, taxonomy Block E; 'Host' -> '1MC Host'
+    -- happened in Block A on 2026-08-13 and this filter was never updated).
+    -- 'Host Prospect' keeps its old name: its field (cat 25) is archived in
+    -- Block H and replaced by 1MC Prospect Status in Block G.
+    '1MC Leader',
+    '1MC Host',
+    '1MC Participant',
+    '1MC Total Conversations',
     'Host Prospect'
   )
 ),

@@ -61,18 +61,21 @@ current_participant_tags AS (
     campaign_id,
     tag_name
   FROM {{ ref('current_tag_values') }}
-  WHERE tag_name = 'Participant'
+  WHERE tag_name = '1MC Participant'
 )
 
 -- Entity+campaign combos that need the Participant tag added
 SELECT
   eic.campaign_id,
   pe.entity_id,
-  'Participant' as field_name,
+  -- Response renamed 2026-08-18 (taxonomy Block E). field_group stays
+  -- 'Million Conversations Role' -- it is the AB FIELD name and also the
+  -- internal routing token matched in updates_needed.sql.
+  '1MC Participant' as field_name,
   'Million Conversations Role' as field_group,
-  '1 Million Conversations:|:Million Conversations Role:|:Participant:|:standard_response:Participant' as sync_string,
+  '1 Million Conversations:|:Million Conversations Role:|:1MC Participant:|:standard_response:1MC Participant' as sync_string,
   '' as current_value,
-  'Participant' as correct_value,
+  '1MC Participant' as correct_value,
   CAST(NULL AS STRING) as removal_ids
 FROM participant_entities pe
 INNER JOIN entities_in_campaigns eic

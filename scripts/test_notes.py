@@ -19,7 +19,7 @@ r1 = ab.append_note(
     entity_interact_id=ENTITY_ID,
     section='1 Million Conversations',
     field='Conversation Notes',
-    name='Event Host Notes',
+    name='1MC Event Host Notes',
     note_body='Event: JP Chess, 2026-04-01. Resonant issues: Value of offbeat openings. Description: Stood around talking about the King\'s Gambit. This is test data.',
 )
 print(f"  Done")
@@ -31,7 +31,7 @@ r2 = ab.append_note(
     entity_interact_id=ENTITY_ID,
     section='1 Million Conversations',
     field='Conversation Notes',
-    name='Conversation Host Notes',
+    name='1MC Host Conversation Notes',
     note_body='Conversation with Geff Foster, Charlotte Airport, 2026-04-01. Topic: Quality of burgers. Insight: It was a very good burger.',
 )
 print(f"  Done")
@@ -43,7 +43,7 @@ r3 = ab.append_note(
     entity_interact_id=ENTITY_ID,
     section='1 Million Conversations',
     field='Conversation Notes',
-    name='Event Attendee Notes',
+    name='1MC Event Attendee Notes',
     note_body='Man is that guy obsessed with the Muzio Gambit. Doesn\'t he know it\'s like -3 according to stockfish?',
 )
 print(f"  Done")

@@ -75,15 +75,20 @@ current_values AS (
     current_value,
     removal_string
   FROM {{ ref('current_tag_values') }}
-  WHERE tag_name = 'Total Conversations'
+  WHERE tag_name = '1MC Total Conversations'
 )
 
 SELECT
   eic.campaign_id,
   het.entity_id,
-  'Total Conversations' as field_name,
+  -- Renamed 2026-08-18 (taxonomy Block E): only the RESPONSE (tag 86) became
+  -- '1MC Total Conversations'. The AB field name -- sync-string segment 2 --
+  -- is still 'Total Conversations', and field_group is the internal routing
+  -- token matched in updates_needed.sql. Edit these positionally, never by
+  -- find/replace.
+  '1MC Total Conversations' as field_name,
   'Total Conversations' as field_group,
-  CONCAT('1 Million Conversations:|:Total Conversations:|:Total Conversations:|:number_response:', CAST(het.total_conversations AS STRING)) as sync_string,
+  CONCAT('1 Million Conversations:|:Total Conversations:|:1MC Total Conversations:|:number_response:', CAST(het.total_conversations AS STRING)) as sync_string,
   COALESCE(cv.current_value, '0') as current_value,
   CAST(het.total_conversations AS STRING) as correct_value,
   cv.removal_string as removal_ids

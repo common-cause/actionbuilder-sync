@@ -57,7 +57,10 @@ current_role_tags AS (
     campaign_id,
     tag_name as role_tag
   FROM {{ ref('current_tag_values') }}
-  WHERE tag_name IN ('Leader', 'Host')
+  -- Responses renamed 2026-08-18 (taxonomy Block E; 'Host' -> '1MC Host' in
+  -- Block A). role_tag is carried straight from the seed into the sync string
+  -- below, so any row added to 1mc_training_map.csv must use these new names.
+  WHERE tag_name IN ('1MC Leader', '1MC Host')
 )
 
 -- Entity+campaign+tag combos that need to be ADDED (not already present)
