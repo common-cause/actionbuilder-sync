@@ -44,7 +44,7 @@
 
 | Object | cat_id | tag ids (status=1 unless noted) |
 |---|---|---|
-| EP > Shifted | 9 | 2024 = 45 |
+| EP > **Election Protection Shifts** (field renamed from `Shifted`, Block F) | 9 | EP Shift Worked 2024 = **45** (renamed from `2024`, 1,428 taggings preserved) · EP Shift Worked 2022 = **129** · EP Shift Worked 2026 = **130** — universal, so all three auto-enable wherever cat 9 is enabled (26/26) |
 | 1MC > Million Conversations Role | 24 | 1MC Host = 81, Leader = 80, Participant = 82 |
 | 1MC > Million Conversations Prospect (to archive) | 25 | Host Prospect = 84, Leader Prospect = 83 (+ archived stray 85) |
 | 1MC > Total Conversations | 26 | Total Conversations = 86 |
@@ -286,11 +286,21 @@ Verify next morning: `append_notes` step logs 0 appends (no re-key misses), V2 z
 
 ---
 
-## Block F — Rename day: Election Protection (+ new values) — FREE, any day
+## Block F — Rename day: Election Protection (+ new values) — ✅ EXECUTED 2026-08-18 (no code change; nothing to commit but docs)
 
 Field `Shifted` → `Election Protection Shifts`; value `2024` (tag 45, 1,428 taggings — they survive per E4) → `EP Shift Worked 2024`; **+ Add Response** `EP Shift Worked 2022`, `EP Shift Worked 2026`.
 
 **Inventory verdict: zero code references.** No sync string, filter, or constant anywhere touches `Shifted` or the `2024` tag (the `shifted_2024` columns in `master_load_qualifiers` etc. are `ep_archive` source columns, unrelated to the AB tag). The sync first learns these names in Block G's `ep_shift_tags` model — which must be written against the NEW names. Renames + new values can happen any day with no code pairing. Capture the two new tag ids for §0.
+
+> **Executed.** Re-verified the zero-reference claim before touching anything: every `shifted` hit in the repo is the `ep_archive` source column `shifted_2024`, and the three `Election Protection` hits are Mobilize `organization__name` values — no AB section/field/value literal anywhere. So no commit beyond docs, and no `dbt run`.
+>
+> **New mutation: `updateTagCategory(input: {tagCategoryId, name})`** renames a FIELD (`updateTag` is values only). Introspected `UpdateTagCategoryInput` first, because a category carries creation-time-only settings that cannot be repaired if a mutation resets them — only `tagCategoryId` is required, and **`isUniversal` / `allowToCreateTagType` are not in the input at all**, so they cannot be disturbed. Read-back confirmed: universal, multi, locked, Standard, `overwrite`, 26/26 campaigns, all unchanged.
+>
+> New ids: **129** = `EP Shift Worked 2022`, **130** = `EP Shift Worked 2026` (`createTag` with `tagCategoryId: "9"`, `tagType: "Standard"`, no `campaignId` — universal values need none).
+>
+> **Universal auto-enablement verified by canary write, not by assumption.** Tag-level `associatedCampaignIds` reads **0 for all three values — including tag 45, which has 1,428 live working taggings**. That 0 is normal for universal values (activation lives at the field level); it is not a VA/DC-style misconfiguration. Proof: a canary write of `EP Shift Worked 2026` to Testy (Test campaign) LANDED — read back as section `Election Protection` / field `Election Protection Shifts` / name `EP Shift Worked 2026`, tagging `d00f75da-…`. So a value created minutes earlier with zero per-campaign activation accepts writes, which is what Block G's `ep_shift_tags` depends on. Testy keeps that tagging (universal ⇒ API-undeletable; UI-removable).
+>
+> ⚠️ **Two API gotchas worth remembering** (both cost a round trip here): `update_entity_with_tags` takes the **parsed tag dict** (`action_builder:section` / `action_builder:field` / `name`), NOT a sync string — passing a raw sync string returns **500**. And the section for cat 9 is `Election Protection` (tag group 4); the renamed `Election Protection Shifts` is the FIELD. A wrong section name also returns 500 rather than silently dropping — noisy failure, which is the good case.
 
 ---
 
