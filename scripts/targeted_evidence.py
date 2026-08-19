@@ -105,6 +105,8 @@ CAMPAIGN_ALIASES: Dict[str, str] = {
     'wisconsin':      '12951a1f-6d24-4923-ba31-d4aa6c4c3183',
 }
 
+# Keep in lockstep with sync.py's TAG_COLS. This list had silently drifted --
+# 'ofp_tag' was missing since the OFP build, so evidence runs under-reported.
 TAG_COLS    = [
     'event_participation_history_tag',
     'event_participation_summary_tag',
@@ -112,6 +114,11 @@ TAG_COLS    = [
     'state_online_actions_tag',
     'national_online_actions_tag',
     'engagement_tag',
+    'ofp_tag',
+    'million_conversations_role_tag',
+    'million_conversations_activity_tag',
+    'million_conversations_prospect_tag',
+    'ep_shift_tag',
 ]
 REMOVE_COLS = [c + '_remove' for c in TAG_COLS]
 
@@ -246,10 +253,13 @@ def _parse_sync_string(s: str) -> Dict[str, Any]:
     Format:  "Section:|:Category:|:FieldName:|:response_type:value"
 
     The AB tagging resource structure is:
-        action_builder:section  → parts[0]  (e.g. "Participation")
-        action_builder:field    → parts[1]  (category, e.g. "Event Attendance Summary")
-        action_builder:name     → parts[2]  (field/data-point name, e.g. "Phone Bank Calls Made")
+        action_builder:section  → parts[0]  (e.g. "Activity")
+        action_builder:field    → parts[1]  (category, e.g. "Phone Bank Calls Made (All Time)")
+        action_builder:name     → parts[2]  (field/data-point name, e.g. "Phone Bank Calls Made (All Time)")
         action_builder:number_response / date_response → parsed value
+
+    In the Activity section the field and the response share a name (one response
+    per single-select field), which is why parts[1] and parts[2] match above.
 
     The signup helper 'name' key maps to action_builder:name in the tagging resource.
     """

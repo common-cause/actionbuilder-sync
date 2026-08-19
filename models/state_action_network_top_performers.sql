@@ -154,12 +154,14 @@ final_results AS (
     -- Sync strings for ActionBuilder integration
     CAST(ru.state_actions_6_months AS STRING) as state_actions_6mo_value,
 
-    CONCAT('Participation:|:Online Actions Past 6 Months:|:Action Network State Actions:|:number_response:', CAST(ru.state_actions_6_months AS STRING)) as state_actions_sync_string,
+    -- Taxonomy Block G: universal Activity section (cat 36)
+    CONCAT('Activity:|:State Action Network Actions (Past 6 Months):|:State Action Network Actions (Past 6 Months):|:number_response:', CAST(ru.state_actions_6_months AS STRING)) as state_actions_sync_string,
 
-    -- Top performer as standard tag (not boolean)
+    -- Top performer as standard tag (not boolean).
+    -- Block G: campaign-local Engagement > Top Performers (cat 42, tag 123).
     CASE
       WHEN ru.action_rank <= 50
-      THEN 'Participation:|:State Online Actions:|:Top State Action Taker:|:standard_response:Top State Action Taker'
+      THEN 'Engagement:|:Top Performers:|:Top State Action Taker:|:standard_response:Top State Action Taker'
       ELSE NULL
     END as top_performer_sync_string
 

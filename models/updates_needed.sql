@@ -49,30 +49,37 @@ current_ab_values AS (
     removal_string
   FROM {{ ref('current_tag_values') }}
   WHERE tag_name IN (
-    'Events Attended Past 6 Months',
+    -- Activity section (universal, cats 32-39) -- taxonomy Block G
+    'Events Attended (Past 6 Months)',
     'Most Recent Event Attended',
     'First Event Attended',
-    'Action Network Actions',
-    'Action Network State Actions',
+    'Action Network Actions (Past 6 Months)',
+    'State Action Network Actions (Past 6 Months)',
+    'Phone Bank Calls Made (All Time)',
+    'NewMode Actions (All Time)',
+    'Soapboxx Stories (All Time)',
+    -- Engagement: Top Performers (cat 42) + Prospect Identification (cat 22)
     'Top State Action Taker',
-    'Phone Bank Calls Made',
-    'NewMode Actions',
-    'Soapboxx Stories',
     'Top National Action Network Activist',
     'Hot Prospect',
     'OFP Training: Organizing Basics',
     'OFP Training: Storytelling',
     'OFP Training: Relational Organizing',
     'OFP Training: Rapid Response Basics',
-    -- 1MC responses (renamed 2026-08-18, taxonomy Block E; 'Host' -> '1MC Host'
-    -- happened in Block A on 2026-08-13 and this filter was never updated).
-    -- 'Host Prospect' keeps its old name: its field (cat 25) is archived in
-    -- Block H and replaced by 1MC Prospect Status in Block G.
+    -- 1MC responses (renamed 2026-08-18, taxonomy Block E). Block G retires the
+    -- old multi-select 'Host Prospect' (cat 25) in favour of the single-select
+    -- 1MC Prospect Status field (cat 31, tags 98/99/100).
     '1MC Leader',
     '1MC Host',
     '1MC Participant',
     '1MC Total Conversations',
-    'Host Prospect'
+    '1MC Host Prospect',
+    '1MC Leader Prospect',
+    '1MC Prospect: None',
+    -- Election Protection Shifts (cat 9, renamed in Block F); additive
+    'EP Shift Worked 2022',
+    'EP Shift Worked 2024',
+    'EP Shift Worked 2026'
   )
 ),
 
@@ -82,30 +89,33 @@ pivot_current_values AS (
   SELECT
     entity_id,
     campaign_id,
-    MAX(CASE WHEN tag_name = 'Events Attended Past 6 Months'       THEN current_value END) as current_events_6mo,
-    MAX(CASE WHEN tag_name = 'Most Recent Event Attended'           THEN current_value END) as current_recent_event,
-    MAX(CASE WHEN tag_name = 'First Event Attended'                 THEN current_value END) as current_first_event,
-    MAX(CASE WHEN tag_name = 'Action Network Actions'               THEN current_value END) as current_action_network,
-    MAX(CASE WHEN tag_name = 'Action Network State Actions'         THEN current_value END) as current_state_actions,
-    MAX(CASE WHEN tag_name = 'Top State Action Taker'               THEN current_value END) as current_top_state_performer,
-    MAX(CASE WHEN tag_name = 'Phone Bank Calls Made'                THEN current_value END) as current_phone_calls,
-    MAX(CASE WHEN tag_name = 'NewMode Actions'                      THEN current_value END) as current_newmode_actions,
-    MAX(CASE WHEN tag_name = 'Soapboxx Stories'                     THEN current_value END) as current_soapboxx_stories,
-    MAX(CASE WHEN tag_name = 'Top National Action Network Activist' THEN current_value END) as current_national_top,
-    MAX(CASE WHEN tag_name = 'Hot Prospect'                         THEN current_value END) as current_hot_prospect,
+    MAX(CASE WHEN tag_name = 'Events Attended (Past 6 Months)'             THEN current_value END) as current_events_6mo,
+    MAX(CASE WHEN tag_name = 'Most Recent Event Attended'                  THEN current_value END) as current_recent_event,
+    MAX(CASE WHEN tag_name = 'First Event Attended'                        THEN current_value END) as current_first_event,
+    MAX(CASE WHEN tag_name = 'Action Network Actions (Past 6 Months)'       THEN current_value END) as current_action_network,
+    MAX(CASE WHEN tag_name = 'State Action Network Actions (Past 6 Months)' THEN current_value END) as current_state_actions,
+    MAX(CASE WHEN tag_name = 'Top State Action Taker'                      THEN current_value END) as current_top_state_performer,
+    MAX(CASE WHEN tag_name = 'Phone Bank Calls Made (All Time)'            THEN current_value END) as current_phone_calls,
+    MAX(CASE WHEN tag_name = 'NewMode Actions (All Time)'                  THEN current_value END) as current_newmode_actions,
+    MAX(CASE WHEN tag_name = 'Soapboxx Stories (All Time)'                 THEN current_value END) as current_soapboxx_stories,
+    MAX(CASE WHEN tag_name = 'Top National Action Network Activist'        THEN current_value END) as current_national_top,
+    MAX(CASE WHEN tag_name = 'Hot Prospect'                                THEN current_value END) as current_hot_prospect,
 
     -- Removal strings: tag-interact-id:|:tagging-interact-id
-    MAX(CASE WHEN tag_name = 'Events Attended Past 6 Months'       THEN removal_string END) as removal_ids_events_6mo,
-    MAX(CASE WHEN tag_name = 'Most Recent Event Attended'           THEN removal_string END) as removal_ids_recent_event,
-    MAX(CASE WHEN tag_name = 'First Event Attended'                 THEN removal_string END) as removal_ids_first_event,
-    MAX(CASE WHEN tag_name = 'Action Network Actions'               THEN removal_string END) as removal_ids_action_network,
-    MAX(CASE WHEN tag_name = 'Action Network State Actions'         THEN removal_string END) as removal_ids_state_actions,
-    MAX(CASE WHEN tag_name = 'Top State Action Taker'               THEN removal_string END) as removal_ids_top_state_performer,
-    MAX(CASE WHEN tag_name = 'Phone Bank Calls Made'                THEN removal_string END) as removal_ids_phone_calls,
-    MAX(CASE WHEN tag_name = 'NewMode Actions'                      THEN removal_string END) as removal_ids_newmode_actions,
-    MAX(CASE WHEN tag_name = 'Soapboxx Stories'                     THEN removal_string END) as removal_ids_soapboxx_stories,
-    MAX(CASE WHEN tag_name = 'Top National Action Network Activist' THEN removal_string END) as removal_ids_national_top,
-    MAX(CASE WHEN tag_name = 'Hot Prospect'                         THEN removal_string END) as removal_ids_hot_prospect
+    -- The 8 Activity fields are universal single-select: AB replaces on write and
+    -- universal taggings are API-undeletable, so their removal strings are read
+    -- but deliberately never emitted (see the _tag_remove block below).
+    MAX(CASE WHEN tag_name = 'Events Attended (Past 6 Months)'             THEN removal_string END) as removal_ids_events_6mo,
+    MAX(CASE WHEN tag_name = 'Most Recent Event Attended'                  THEN removal_string END) as removal_ids_recent_event,
+    MAX(CASE WHEN tag_name = 'First Event Attended'                        THEN removal_string END) as removal_ids_first_event,
+    MAX(CASE WHEN tag_name = 'Action Network Actions (Past 6 Months)'       THEN removal_string END) as removal_ids_action_network,
+    MAX(CASE WHEN tag_name = 'State Action Network Actions (Past 6 Months)' THEN removal_string END) as removal_ids_state_actions,
+    MAX(CASE WHEN tag_name = 'Top State Action Taker'                      THEN removal_string END) as removal_ids_top_state_performer,
+    MAX(CASE WHEN tag_name = 'Phone Bank Calls Made (All Time)'            THEN removal_string END) as removal_ids_phone_calls,
+    MAX(CASE WHEN tag_name = 'NewMode Actions (All Time)'                  THEN removal_string END) as removal_ids_newmode_actions,
+    MAX(CASE WHEN tag_name = 'Soapboxx Stories (All Time)'                 THEN removal_string END) as removal_ids_soapboxx_stories,
+    MAX(CASE WHEN tag_name = 'Top National Action Network Activist'        THEN removal_string END) as removal_ids_national_top,
+    MAX(CASE WHEN tag_name = 'Hot Prospect'                                THEN removal_string END) as removal_ids_hot_prospect
   FROM current_ab_values
   GROUP BY entity_id, campaign_id
 ),
@@ -256,7 +266,7 @@ updates_to_apply AS (
   SELECT
     campaign_id,
     entity_id,
-    'Events Attended Past 6 Months' as field_name,
+    'Events Attended (Past 6 Months)' as field_name,
     'Event Attendance Summary' as field_group,
     events_6mo_sync_string as sync_string,
     current_events_6mo as current_value,
@@ -278,6 +288,14 @@ updates_to_apply AS (
     removal_ids_recent_event as removal_ids
   FROM value_comparisons
   WHERE recent_event_needs_update = TRUE
+    -- Block G: this is a universal date field. There is no way to express "no
+    -- date" -- a number field can be cleared by writing 0, but a date cannot, and
+    -- a universal tagging cannot be deleted through the API. Emitting a row whose
+    -- correct value is empty would therefore produce a permanent no-op that
+    -- reappears in the feed every night and can never drain. If an event date
+    -- disappears upstream the stale date is left in AB for a human to remove in
+    -- the UI (universal taggings ARE UI-deletable). Same guard on First Event.
+    AND COALESCE(correct_recent_event, '') != ''
 
   UNION ALL
 
@@ -292,13 +310,15 @@ updates_to_apply AS (
     removal_ids_first_event as removal_ids
   FROM value_comparisons
   WHERE first_event_needs_update = TRUE
+    -- See the Most Recent Event Attended guard above.
+    AND COALESCE(correct_first_event, '') != ''
 
   UNION ALL
 
   SELECT
     campaign_id,
     entity_id,
-    'Action Network Actions' as field_name,
+    'Action Network Actions (Past 6 Months)' as field_name,
     'Online Actions Past 6 Months' as field_group,
     action_network_6mo_sync_string as sync_string,
     current_action_network as current_value,
@@ -312,7 +332,7 @@ updates_to_apply AS (
   SELECT
     campaign_id,
     entity_id,
-    'Action Network State Actions' as field_name,
+    'State Action Network Actions (Past 6 Months)' as field_name,
     'Online Actions Past 6 Months' as field_group,
     state_actions_6mo_sync_string as sync_string,
     current_state_actions as current_value,
@@ -340,7 +360,7 @@ updates_to_apply AS (
   SELECT
     campaign_id,
     entity_id,
-    'Phone Bank Calls Made' as field_name,
+    'Phone Bank Calls Made (All Time)' as field_name,
     'Event Attendance Summary' as field_group,
     phone_calls_sync_string as sync_string,
     current_phone_calls as current_value,
@@ -354,7 +374,7 @@ updates_to_apply AS (
   SELECT
     campaign_id,
     entity_id,
-    'NewMode Actions' as field_name,
+    'NewMode Actions (All Time)' as field_name,
     'Online Actions Past 6 Months' as field_group,
     newmode_actions_sync_string as sync_string,
     current_newmode_actions as current_value,
@@ -368,7 +388,7 @@ updates_to_apply AS (
   SELECT
     campaign_id,
     entity_id,
-    'Soapboxx Stories' as field_name,
+    'Soapboxx Stories (All Time)' as field_name,
     'Online Actions Past 6 Months' as field_group,
     soapboxx_sync_string as sync_string,
     current_soapboxx_stories as current_value,
@@ -463,7 +483,8 @@ updates_to_apply AS (
 
   UNION ALL
 
-  -- 1MC Host Prospect tags (additive — never removes, only adds missing)
+  -- 1MC Prospect Status (universal single-select; replace-on-write, never removes.
+  -- "Cleared" arrives here as an explicit '1MC Prospect: None' row.)
   SELECT
     campaign_id,
     entity_id,
@@ -474,6 +495,20 @@ updates_to_apply AS (
     correct_value,
     removal_ids
   FROM {{ ref('1mc_prospects') }}
+
+  UNION ALL
+
+  -- EP shift-year flags (universal multiselect — additive, never removes)
+  SELECT
+    campaign_id,
+    entity_id,
+    field_name,
+    field_group,
+    sync_string,
+    current_value,
+    correct_value,
+    removal_ids
+  FROM {{ ref('ep_shift_tags') }}
 ),
 
 entity_interact_ids AS (
@@ -549,25 +584,29 @@ SELECT
     THEN sync_string
     ELSE NULL
   END as million_conversations_prospect_tag,
+  CASE
+    WHEN field_group = 'Election Protection Shifts' AND correct_value != ''
+    THEN sync_string
+    ELSE NULL
+  END as ep_shift_tag,
 
   -- _tag_remove columns: existing tagging to delete before adding new value
   -- Format: tag-interact-id:|:tagging-interact-id
   -- NULL when there is no existing value to remove (i.e. this is a first-time write)
-  CASE
-    WHEN field_group = 'Event Attendance History' AND current_value != ''
-    THEN removal_ids
-    ELSE NULL
-  END as event_participation_history_tag_remove,
-  CASE
-    WHEN field_group = 'Event Attendance Summary' AND current_value != ''
-    THEN removal_ids
-    ELSE NULL
-  END as event_participation_summary_tag_remove,
-  CASE
-    WHEN field_group = 'Online Actions Past 6 Months' AND current_value != ''
-    THEN removal_ids
-    ELSE NULL
-  END as online_actions_past_6_months_tag_remove,
+  --
+  -- Taxonomy Block G: the four Activity groups below are now UNIVERSAL
+  -- SINGLE-SELECT fields, so their removals are permanently NULL. Two independent
+  -- reasons, either one sufficient:
+  --   * single-select replaces on write -- deleting first is pointless; and
+  --   * universal taggings are API-undeletable, so the delete would just 404.
+  -- The legacy Participation fields these replaced were campaign-local MULTI-select
+  -- (verified against live AB), which is why they needed the explicit delete.
+  -- Removals stay live only for the three campaign-local Engagement groups.
+  CAST(NULL AS STRING) as event_participation_history_tag_remove,
+  CAST(NULL AS STRING) as event_participation_summary_tag_remove,
+  CAST(NULL AS STRING) as online_actions_past_6_months_tag_remove,
+  -- Top Performers (cat 42) is campaign-local multiselect: rotation off the top-50
+  -- needs a true delete, and a true delete works here.
   CASE
     WHEN field_group = 'State Online Actions' AND current_value != ''
     THEN removal_ids
@@ -578,23 +617,32 @@ SELECT
     THEN removal_ids
     ELSE NULL
   END as national_online_actions_tag_remove,
+  -- Hot Prospect (cat 22) is campaign-local single-select; unchanged by Block G.
   CASE
     WHEN field_group = 'Prospect Engagement' AND current_value != ''
     THEN removal_ids
     ELSE NULL
   END as engagement_tag_remove,
-  -- OFP is additive-only (multiselect); removal is always NULL
+  -- OFP is additive-only (universal multiselect); removal is always NULL
   CAST(NULL AS STRING) as ofp_tag_remove,
   -- 1MC Campaign Role is additive-only (multiselect); removal is always NULL
   CAST(NULL AS STRING) as million_conversations_role_tag_remove,
-  -- 1MC Total Conversations: remove old value before writing new one
-  CASE
-    WHEN field_group = 'Total Conversations' AND current_value != '' AND current_value != '0'
-    THEN removal_ids
-    ELSE NULL
-  END as million_conversations_activity_tag_remove,
-  -- 1MC Prospect is additive-only; removal is always NULL
+  -- 1MC Total Conversations: NULL, not a removal.
+  --
+  -- This deviates from the Block G runbook, which said to "remove old value
+  -- before writing new one". That instruction predates checking the field's
+  -- actual settings: live AB reports `1 Million Conversations > Total
+  -- Conversations` as UNIVERSAL and SINGLE-select (verified 2026-08-19). Both
+  -- halves matter -- universal makes the tagging API-undeletable, and
+  -- single-select means the new number replaces the old one anyway. Block G is
+  -- what makes this column reachable at all (it adds million_conversations_-
+  -- activity_tag to sync.py's TAG_COLS, so the 1MC write paths go live for the
+  -- first time), so leaving the removal in would have shipped a fresh 404 wave.
+  CAST(NULL AS STRING) as million_conversations_activity_tag_remove,
+  -- 1MC Prospect Status is universal single-select: replace-on-write, undeletable
   CAST(NULL AS STRING) as million_conversations_prospect_tag_remove,
+  -- EP shift years are universal multiselect and additive; never removed
+  CAST(NULL AS STRING) as ep_shift_tag_remove,
 
   current_value,
   correct_value,

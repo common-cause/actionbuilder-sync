@@ -312,6 +312,21 @@ Field `Shifted` → `Election Protection Shifts`; value `2024` (tag 45, 1,428 ta
 
 Prereqs: Blocks A–F done; Activity fields exist + enabled everywhere (B); `1MC Prospect Status` enabled in campaign 26 (A).
 
+> **PR authored 2026-08-19 on branch `block-g-pipeline-cutover` — NOT deployed.** Merging + `bash dbt.sh run` before 10 PM ET is what starts the cutover nightly.
+>
+> Prereqs re-verified against live AB (`list_tags`), not from this doc: all 8 Activity fields + both Top Performers values + all three `1MC Prospect Status` values + all three `EP Shift Worked *` values are present and correctly typed. `1MC Prospect Status` is **universal** and visible in every campaign checked (1/12/16/21/26) — the earlier "Test-only enablement" note is stale.
+>
+> **Four corrections to the tables below — the tables are wrong, this note is right:**
+>
+> 1. **`1MC > Total Conversations` must NOT emit a removal.** The §G sync.py table says "remove old value before writing new one". Live AB reports cat 26 as **universal + single-select**: universal ⇒ the tagging is API-undeletable, single-select ⇒ the new number replaces the old one anyway. Block G is what first puts `million_conversations_activity_tag` into `TAG_COLS`, so keeping the removal would have shipped a *new* 404 wave. Now `CAST(NULL AS STRING)`.
+> 2. **The four `Activity` removal columns are NULL too**, for the same reason (universal single-select). Removals survive only for the campaign-local `Engagement` fields — `Top Performers` (multi; top-50 rotation genuinely needs a true delete) and `Prospect Identification`. Full universality inventory is in the PR body.
+> 3. **`test_campaign_update_summary.sql` needs no change.** The table lists lines 29/49, but both filters name only `Most Recent Event Attended` and `First Event Attended` — the two response names Block G does not rename.
+> 4. **`_get_tag_map()` needs an override table (`BLOCK_G_TAG_IDS`), which §G did not anticipate.** Two independent problems: (a) **name collisions** — `First Event Attended`, `Most Recent Event Attended`, `Top State Action Taker` and `Top National Action Network Activist` now each exist TWICE with `status=1` (legacy Participation + new home), and `_get_tag_map` builds `{name: interact_id}` from an unordered query, so the id was a coin flip; a wrong interact_id in `sync_log` corrupts the `current_tag_values` overlay that every idempotency check reads. Verified those four are the only duplicates. (b) **unreplicated renames** — BQ still holds pre-Block-E/F names, so `1MC Leader`, `1MC Participant`, `1MC Total Conversations`, the three notes responses and all three `EP Shift Worked *` values are absent *by live name*; tag 45 still reads `2024` and 129/130 are missing entirely.
+>
+> **One deliberate behaviour change not in the plan:** the two universal *date* fields skip rows whose correct value is empty. A number clears by writing `0`; a date cannot, and a universal tagging cannot be deleted — so such a row would be a permanent no-op that reappears nightly and never drains. Stale dates are left for UI removal.
+>
+> **Runtime expectation corrected:** `CLAUDE.md`'s "1.5–4 hours typical" is stale. Recent nightlies run **8–10 h** (7/07 476 min, 7/10 558 min, 8/19 590 min), so the cutover night is **~13–14 h**, not ~8. Still clears the next 10 PM ET start.
+
 ### dbt changes
 
 | File | Lines (pre-PR) | Change |

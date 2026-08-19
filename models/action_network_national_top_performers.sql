@@ -19,7 +19,8 @@ SELECT
   national_rank,
   TRUE as top_national_action_taker,
   'Top National Action Network Activist' as top_national_value,
-  'Participation:|:National Online Actions:|:Top National Action Network Activist:|:standard_response:Top National Action Network Activist' as top_national_sync_string
+  -- Block G: campaign-local Engagement > Top Performers (cat 42, tag 124)
+  'Engagement:|:Top Performers:|:Top National Action Network Activist:|:standard_response:Top National Action Network Activist' as top_national_sync_string
 
 FROM ranked_nationally
 WHERE national_rank <= 50

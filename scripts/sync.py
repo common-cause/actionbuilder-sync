@@ -101,7 +101,16 @@ TAG_COLS = [
     'national_online_actions_tag',
     'engagement_tag',
     'ofp_tag',
+    # Added in taxonomy Block G (2026-08-19). The three 1MC columns had existed in
+    # updates_needed since the 1MC build but were never listed here, so their write
+    # paths were inert -- only append_notes was live for 1MC.
+    'million_conversations_role_tag',
+    'million_conversations_activity_tag',
+    'million_conversations_prospect_tag',
+    'ep_shift_tag',
 ]
+# updates_needed emits a NULL removal for every additive/universal column, so the
+# delete path stays inert for them without needing a separate allowlist here.
 REMOVE_COLS = [c + '_remove' for c in TAG_COLS]
 
 # ---------------------------------------------------------------------------
@@ -117,24 +126,31 @@ REMOVE_COLS = [c + '_remove' for c in TAG_COLS]
 # silently drop the tag ("Invalid fields are ignored"), so the value never lands
 # on insert.
 # ---------------------------------------------------------------------------
+# Repointed to the universal Activity section in taxonomy Block G (2026-08-19).
+# In Activity the field name and the response name are identical (one response per
+# field, single-select) -- that is deliberate, not a copy-paste error.
 INSERT_TAG_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
     'action_network_actions': (
-        'Participation', 'Online Actions Past 6 Months', 'Action Network Actions', 'number_response',
+        'Activity', 'Action Network Actions (Past 6 Months)',
+        'Action Network Actions (Past 6 Months)', 'number_response',
     ),
     'events_6m': (
-        'Participation', 'Event Attendance Summary', 'Events Attended Past 6 Months', 'number_response',
+        'Activity', 'Events Attended (Past 6 Months)',
+        'Events Attended (Past 6 Months)', 'number_response',
     ),
     'phone_bank_dials': (
-        'Participation', 'Event Attendance Summary', 'Phone Bank Calls Made', 'number_response',
+        'Activity', 'Phone Bank Calls Made (All Time)',
+        'Phone Bank Calls Made (All Time)', 'number_response',
     ),
     'first_event_date': (
-        'Participation', 'Event Attendance History', 'First Event Attended', 'date_response',
+        'Activity', 'First Event Attended', 'First Event Attended', 'date_response',
     ),
     'mr_event_date': (
-        'Participation', 'Event Attendance History', 'Most Recent Event Attended', 'date_response',
+        'Activity', 'Most Recent Event Attended', 'Most Recent Event Attended', 'date_response',
     ),
     'soapboxx_stories': (
-        'Participation', 'Storytelling', 'Soapboxx Stories', 'number_response',
+        'Activity', 'Soapboxx Stories (All Time)',
+        'Soapboxx Stories (All Time)', 'number_response',
     ),
 }
 
@@ -161,6 +177,107 @@ OFP_UNIVERSAL_TAG_IDS: Dict[str, str] = {
     'OFP Training: Storytelling':          '0e1102dc-bf89-4c06-9ff6-c74d77efc317',
     'OFP Training: Relational Organizing': '282b2017-54a5-41bc-b52c-7863e598950d',
     'OFP Training: Rapid Response Basics': '1ef15001-e59c-4d3d-92fd-7eb001ee9c46',
+}
+
+# ---------------------------------------------------------------------------
+# Block G tag interact_id overrides
+#
+# _get_tag_map() builds {name: interact_id} from cln_actionbuilder__tags WHERE
+# status = 1. After Block G two classes of name are wrong or ambiguous there, and
+# a wrong tag_interact_id in sync_log corrupts the current_tag_values overlay --
+# which is what every interact_id-keyed idempotency check reads.
+#
+#   1. NAME COLLISIONS. The four names below now exist twice with status = 1: once
+#      in the legacy Participation section and once in their Block B/C home. The
+#      dict comprehension in _get_tag_map takes whichever row the unordered query
+#      returns last, so without these overrides the id is a coin flip. (Verified
+#      2026-08-19: these four are the ONLY duplicate names among status=1 tags;
+#      every other Block G target resolves unambiguously and is left to BQ.) The
+#      legacy twins archive away in Block H, after which these entries become
+#      redundant but harmless.
+#   2. NOT YET REPLICATED. The Block F EP responses: tag 45 still reads its
+#      pre-rename name '2024' in BQ, and 129/130 are absent entirely. Read from
+#      live AB via list_tags on 2026-08-19.
+#
+# As with OFP_UNIVERSAL_TAG_IDS these are keyed on the LIVE response name, so a
+# future rename must update this table in the same commit -- otherwise the lookup
+# returns None and sync_log records a NULL tag_interact_id.
+# ---------------------------------------------------------------------------
+BLOCK_G_TAG_IDS: Dict[str, str] = {
+    # Name collisions with the legacy Participation section
+    'First Event Attended':                 '54cac19b-7229-4aed-9b8c-2ff04a188076',
+    'Most Recent Event Attended':           '52af6394-72d8-470d-a3a2-7a4ce1e5d3d2',
+    'Top State Action Taker':               'dbd1eb1d-4037-451a-9a4e-32d13a4cd255',
+    'Top National Action Network Activist':  '373790c0-71be-4d41-a65e-8d1a3047147c',
+    # Election Protection Shifts (Block F) -- not yet in BQ
+    'EP Shift Worked 2022':                 'b9612ad8-840c-4e10-953d-7b0e5590ee5f',
+    'EP Shift Worked 2024':                 'f53c7eae-b20e-412b-a340-825cb5be5dc9',
+    'EP Shift Worked 2026':                 'ea8cd848-3b90-4afe-b7d5-06d6fde32f92',
+    # 1MC responses renamed in Block E (2026-08-18) -- BQ still holds the old
+    # names ('Leader', 'Participant', 'Total Conversations', 'Conversation Host
+    # Notes', ...), so a lookup by live name misses. This matters now because
+    # Block G is what puts the 1MC role / total-conversations write paths into
+    # TAG_COLS for the first time. '1MC Host' was renamed back in Block A and HAS
+    # replicated; it is listed for completeness of the group.
+    '1MC Host':                             '8d8cd0ec-2f45-4338-85c9-53179c1f63a8',
+    '1MC Leader':                           '09a3ff4c-a872-4cdc-a827-f4d229cf4eed',
+    '1MC Participant':                      '75d26b82-b07c-4092-8e9a-1f979f02a8b6',
+    '1MC Total Conversations':              '0aa3763d-18de-496f-8466-22e156f6a162',
+    '1MC Host Conversation Notes':          '5d6fc352-6b3d-4066-b321-a1d3a3ab1c16',
+    '1MC Event Attendee Notes':             '420040c5-4c05-440a-a740-412095ee0022',
+    '1MC Event Host Notes':                 '55eb2cf2-88be-4e48-bc15-9f7c5d50d3e7',
+}
+
+# ---------------------------------------------------------------------------
+# Universal tag interact_ids — never issue a delete_tagging for these
+#
+# Taggings on a UNIVERSAL field cannot be deleted through the API (the DELETE
+# returns 404). Single-select universal fields replace on write, and multi-select
+# ones are additive by design, so a removal is never the right call for any of
+# them.
+#
+# updates_needed already emits NULL for every one of these columns, so this set
+# is a backstop, not the mechanism: it stops a future model edit from silently
+# reintroducing thousands of 404 deletes. That failure mode is not hypothetical --
+# the 2026-08-19 nightly burned 8,494 no-op DELETEs (8,492 of them on taggings we
+# had already deleted the night before) because removal ids were sourced from a
+# stale BQ mirror.
+#
+# Full field inventory verified against live AB 2026-08-19 (field_is_universal /
+# allow_multiple_responses). Campaign-local fields — Engagement > Top Performers,
+# Engagement > Prospect Identification, and the legacy Participation section —
+# are deliberately absent: true deletes work there and rotation depends on them.
+# ---------------------------------------------------------------------------
+UNIVERSAL_TAG_IDS_NO_DELETE: set = {
+    # Activity (cats 32-39, universal single-select)
+    '54cac19b-7229-4aed-9b8c-2ff04a188076',  # First Event Attended
+    '52af6394-72d8-470d-a3a2-7a4ce1e5d3d2',  # Most Recent Event Attended
+    'f07244a9-a95b-4a28-971c-fa3c8973dc79',  # Events Attended (Past 6 Months)
+    'b200d12c-0a1e-45d7-94fa-10402aef30fc',  # Action Network Actions (Past 6 Months)
+    'b1bbaa5c-8139-4bb3-8d98-50af1dcb1530',  # State Action Network Actions (Past 6 Months)
+    'e8a61d33-e733-452c-8450-1f7e1de87b3a',  # NewMode Actions (All Time)
+    '598a8357-c352-44c5-84d6-fc0d728c5d4c',  # Soapboxx Stories (All Time)
+    '6973f189-7a20-438d-bfb8-a7cd1233e856',  # Phone Bank Calls Made (All Time)
+    # Trainings > Organizing For Power (universal multi)
+    *OFP_UNIVERSAL_TAG_IDS.values(),
+    # Election Protection Shifts (cat 9, universal multi)
+    'b9612ad8-840c-4e10-953d-7b0e5590ee5f',  # EP Shift Worked 2022
+    'f53c7eae-b20e-412b-a340-825cb5be5dc9',  # EP Shift Worked 2024
+    'ea8cd848-3b90-4afe-b7d5-06d6fde32f92',  # EP Shift Worked 2026
+    # 1MC Prospect Status (cat 31, universal single-select)
+    '7c946169-3f88-4c45-9bf9-0a8bb5a2e12c',  # 1MC Host Prospect
+    '644a722f-a3f9-4e80-aecb-3bedea895f73',  # 1MC Leader Prospect
+    '0825f28d-adf8-4f2d-9244-56288190570e',  # 1MC Prospect: None
+    # The rest of the 1 Million Conversations section — the whole section is
+    # universal. Total Conversations (cat 26) is the one that matters here: it is
+    # universal SINGLE-select, so it replaces on write and must never be deleted,
+    # which is why updates_needed now emits NULL for its removal column.
+    '8d8cd0ec-2f45-4338-85c9-53179c1f63a8',  # 1MC Host              (cat 24, multi)
+    '09a3ff4c-a872-4cdc-a827-f4d229cf4eed',  # 1MC Leader            (cat 24, multi)
+    '75d26b82-b07c-4092-8e9a-1f979f02a8b6',  # 1MC Participant       (cat 24, multi)
+    '0aa3763d-18de-496f-8466-22e156f6a162',  # 1MC Total Conversations (cat 26, single)
+    '01c1f14c-537e-4d2e-8421-3bd1f77483f0',  # Host Prospect         (cat 25, retired in Block H)
+    '0b1eb437-90d3-4849-a89c-a439f779c11f',  # Leader Prospect       (cat 25, retired in Block H)
 }
 
 # ---------------------------------------------------------------------------
@@ -496,6 +613,9 @@ def _get_tag_map(bq: BigQueryConnector) -> Dict[str, str]:
     # Force the OFP response tags to the new universal-field interact_ids (see
     # OFP_UNIVERSAL_TAG_IDS) — BQ still returns the old archived ids until replication.
     tag_map.update(OFP_UNIVERSAL_TAG_IDS)
+    # Resolve the Block G name collisions and the not-yet-replicated EP responses
+    # (see BLOCK_G_TAG_IDS).
+    tag_map.update(BLOCK_G_TAG_IDS)
     return tag_map
 
 
@@ -617,6 +737,19 @@ def update_records(
         try:
             # Step a: delete existing taggings before writing new values
             for tag_id, tagging_id in removals:
+                # Universal taggings cannot be deleted through the API — the
+                # DELETE just 404s. updates_needed already emits NULL removals for
+                # every universal field, so reaching this branch means a model
+                # regressed; skip the call and say so rather than burn a request.
+                if tag_id in UNIVERSAL_TAG_IDS_NO_DELETE:
+                    logger.warning(
+                        f'  Skipping delete of universal tagging {tagging_id[:8]}... '
+                        f'(tag {tag_id[:8]}...) for {label}: universal taggings are '
+                        f'API-undeletable. A removal reaching sync.py means the feed '
+                        f'emitted one it should not have.'
+                    )
+                    continue
+
                 # Reverse-lookup tag_name from tag_map for logging
                 removal_tag_name = None
                 for tn, tid in tag_map.items():
@@ -1239,15 +1372,24 @@ def snapshot_tag_state(
     # Tags we care about (the ones managed by our sync)
     managed_tags = set(INSERT_TAG_FIELDS.values())
     managed_tag_names = {
-        'Events Attended Past 6 Months', 'Most Recent Event Attended',
-        'First Event Attended', 'Action Network Actions',
-        'Action Network State Actions', 'Top State Action Taker',
-        'Phone Bank Calls Made', 'NewMode Actions',
-        'Top National Action Network Activist', 'Hot Prospect',
-        'Soapboxx Stories',
+        # Activity section (universal single-select) -- taxonomy Block G
+        'Events Attended (Past 6 Months)', 'Most Recent Event Attended',
+        'First Event Attended', 'Action Network Actions (Past 6 Months)',
+        'State Action Network Actions (Past 6 Months)',
+        'Phone Bank Calls Made (All Time)', 'NewMode Actions (All Time)',
+        'Soapboxx Stories (All Time)',
+        # Engagement: Top Performers (cat 42) + Prospect Identification (cat 22)
+        'Top State Action Taker', 'Top National Action Network Activist',
+        'Hot Prospect',
         # OFP universal responses (renamed 2026-08-17, taxonomy Block D)
         'OFP Training: Organizing Basics', 'OFP Training: Storytelling',
         'OFP Training: Relational Organizing', 'OFP Training: Rapid Response Basics',
+        # 1MC responses (renamed 2026-08-18, taxonomy Block E)
+        '1MC Host', '1MC Leader', '1MC Participant', '1MC Total Conversations',
+        # 1MC Prospect Status (cat 31, universal single-select) -- Block G
+        '1MC Host Prospect', '1MC Leader Prospect', '1MC Prospect: None',
+        # Election Protection Shifts (cat 9, renamed in Block F)
+        'EP Shift Worked 2022', 'EP Shift Worked 2024', 'EP Shift Worked 2026',
     }
 
     for i, row in enumerate(rows, 1):
