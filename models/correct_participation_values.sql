@@ -328,23 +328,29 @@ SELECT
   soapboxx_stories_value,
   top_national_action_taker_value,
 
-  -- Sync field mappings with embedded values and response types
-  CONCAT('Participation:|:Event Attendance Summary:|:Events Attended Past 6 Months:|:number_response:', events_attended_past_6_months_value) as events_6mo_sync_string,
-  CONCAT('Participation:|:Event Attendance History:|:Most Recent Event Attended:|:date_response:', COALESCE(most_recent_event_attended_value, '')) as recent_event_sync_string,
-  CONCAT('Participation:|:Event Attendance History:|:First Event Attended:|:date_response:', COALESCE(first_event_attended_value, '')) as first_event_sync_string,
-  CONCAT('Participation:|:Online Actions Past 6 Months:|:Action Network Actions:|:number_response:', action_network_actions_6mo_value) as action_network_6mo_sync_string,
-  CONCAT('Participation:|:Online Actions Past 6 Months:|:Action Network State Actions:|:number_response:', state_actions_6mo_value) as state_actions_6mo_sync_string,
+  -- Sync field mappings with embedded values and response types.
+  --
+  -- Taxonomy Block G (2026-08-19): repointed from the legacy campaign-local
+  -- `Participation` section to the universal `Activity` section (group 13,
+  -- cats 32-39), and the two top-performer flags to campaign-local
+  -- `Engagement > Top Performers` (cat 42). In Activity the field name and the
+  -- response name are identical -- that is intentional, one response per field.
+  CONCAT('Activity:|:Events Attended (Past 6 Months):|:Events Attended (Past 6 Months):|:number_response:', events_attended_past_6_months_value) as events_6mo_sync_string,
+  CONCAT('Activity:|:Most Recent Event Attended:|:Most Recent Event Attended:|:date_response:', COALESCE(most_recent_event_attended_value, '')) as recent_event_sync_string,
+  CONCAT('Activity:|:First Event Attended:|:First Event Attended:|:date_response:', COALESCE(first_event_attended_value, '')) as first_event_sync_string,
+  CONCAT('Activity:|:Action Network Actions (Past 6 Months):|:Action Network Actions (Past 6 Months):|:number_response:', action_network_actions_6mo_value) as action_network_6mo_sync_string,
+  CONCAT('Activity:|:State Action Network Actions (Past 6 Months):|:State Action Network Actions (Past 6 Months):|:number_response:', state_actions_6mo_value) as state_actions_6mo_sync_string,
   CASE
     WHEN top_state_action_taker_value IS NOT NULL
-    THEN CONCAT('Participation:|:State Online Actions:|:Top State Action Taker:|:standard_response:', top_state_action_taker_value)
+    THEN CONCAT('Engagement:|:Top Performers:|:Top State Action Taker:|:standard_response:', top_state_action_taker_value)
     ELSE NULL
   END as top_state_action_taker_sync_string,
-  CONCAT('Participation:|:Event Attendance Summary:|:Phone Bank Calls Made:|:number_response:', phone_bank_calls_made_value) as phone_calls_sync_string,
-  CONCAT('Participation:|:Online Actions Past 6 Months:|:NewMode Actions:|:number_response:', newmode_actions_value) as newmode_actions_sync_string,
-  CONCAT('Participation:|:Storytelling:|:Soapboxx Stories:|:number_response:', soapboxx_stories_value) as soapboxx_sync_string,
+  CONCAT('Activity:|:Phone Bank Calls Made (All Time):|:Phone Bank Calls Made (All Time):|:number_response:', phone_bank_calls_made_value) as phone_calls_sync_string,
+  CONCAT('Activity:|:NewMode Actions (All Time):|:NewMode Actions (All Time):|:number_response:', newmode_actions_value) as newmode_actions_sync_string,
+  CONCAT('Activity:|:Soapboxx Stories (All Time):|:Soapboxx Stories (All Time):|:number_response:', soapboxx_stories_value) as soapboxx_sync_string,
   CASE
     WHEN top_national_action_taker_value IS NOT NULL
-    THEN CONCAT('Participation:|:National Online Actions:|:Top National Action Network Activist:|:standard_response:', top_national_action_taker_value)
+    THEN CONCAT('Engagement:|:Top Performers:|:Top National Action Network Activist:|:standard_response:', top_national_action_taker_value)
     ELSE NULL
   END as top_national_action_taker_sync_string,
 

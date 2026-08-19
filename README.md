@@ -171,7 +171,6 @@ ActionBuilder Sync/
 │   ├── time_query.py           # Utility: time a BQ query
 │   ├── test_connect_semantics.py  # Live-test driver: connect-vs-duplicate API semantics
 │   ├── test_notes.py           # Live-test driver: notes append
-│   ├── add_tags_to_campaigns.py   # One-time: add tag fields to campaigns
 │   ├── create_sync_log.sql     # One-time DDL to create sync_log table (already run)
 │   ├── create_dedup_resolutions.sql  # One-time DDL for dedup_resolutions table
 │   ├── create_suppression_list.sql   # One-time DDL for suppression_list table (already run)

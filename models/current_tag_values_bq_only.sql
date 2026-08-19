@@ -83,16 +83,19 @@ SELECT
 
   -- Create formatted field identifier for sync strings
   CASE
-    WHEN tag_name = 'Events Attended Past 6 Months'          THEN 'Participation:|:Event Attendance Summary:|:Events Attended Past 6 Months:|:number_response'
-    WHEN tag_name = 'Most Recent Event Attended'              THEN 'Participation:|:Event Attendance History:|:Most Recent Event Attended:|:date_response'
-    WHEN tag_name = 'First Event Attended'                    THEN 'Participation:|:Event Attendance History:|:First Event Attended:|:date_response'
-    WHEN tag_name = 'Action Network Actions'                  THEN 'Participation:|:Online Actions Past 6 Months:|:Action Network Actions:|:number_response'
-    WHEN tag_name = 'Action Network State Actions'            THEN 'Participation:|:Online Actions Past 6 Months:|:Action Network State Actions:|:number_response'
-    WHEN tag_name = 'Top State Action Taker'                  THEN 'Participation:|:State Online Actions:|:Top State Action Taker:|:standard_response'
-    WHEN tag_name = 'Phone Bank Calls Made'                   THEN 'Participation:|:Event Attendance Summary:|:Phone Bank Calls Made:|:number_response'
-    WHEN tag_name = 'NewMode Actions'                         THEN 'Participation:|:Online Actions Past 6 Months:|:NewMode Actions:|:number_response'
-    WHEN tag_name = 'Soapboxx Stories'                        THEN 'Participation:|:Storytelling:|:Soapboxx Stories:|:number_response'
-    WHEN tag_name = 'Top National Action Network Activist'    THEN 'Participation:|:National Online Actions:|:Top National Action Network Activist:|:standard_response'
+    -- Taxonomy Block G (2026-08-19): the 8 activity metrics live in the universal
+    -- Activity section (field name == response name); the two top-performer flags
+    -- live in campaign-local Engagement > Top Performers.
+    WHEN tag_name = 'Events Attended (Past 6 Months)'               THEN 'Activity:|:Events Attended (Past 6 Months):|:Events Attended (Past 6 Months):|:number_response'
+    WHEN tag_name = 'Most Recent Event Attended'                    THEN 'Activity:|:Most Recent Event Attended:|:Most Recent Event Attended:|:date_response'
+    WHEN tag_name = 'First Event Attended'                          THEN 'Activity:|:First Event Attended:|:First Event Attended:|:date_response'
+    WHEN tag_name = 'Action Network Actions (Past 6 Months)'         THEN 'Activity:|:Action Network Actions (Past 6 Months):|:Action Network Actions (Past 6 Months):|:number_response'
+    WHEN tag_name = 'State Action Network Actions (Past 6 Months)'   THEN 'Activity:|:State Action Network Actions (Past 6 Months):|:State Action Network Actions (Past 6 Months):|:number_response'
+    WHEN tag_name = 'Top State Action Taker'                        THEN 'Engagement:|:Top Performers:|:Top State Action Taker:|:standard_response'
+    WHEN tag_name = 'Phone Bank Calls Made (All Time)'              THEN 'Activity:|:Phone Bank Calls Made (All Time):|:Phone Bank Calls Made (All Time):|:number_response'
+    WHEN tag_name = 'NewMode Actions (All Time)'                    THEN 'Activity:|:NewMode Actions (All Time):|:NewMode Actions (All Time):|:number_response'
+    WHEN tag_name = 'Soapboxx Stories (All Time)'                   THEN 'Activity:|:Soapboxx Stories (All Time):|:Soapboxx Stories (All Time):|:number_response'
+    WHEN tag_name = 'Top National Action Network Activist'          THEN 'Engagement:|:Top Performers:|:Top National Action Network Activist:|:standard_response'
     WHEN tag_name = 'Hot Prospect'                            THEN 'Engagement:|:Prospect Identification:|:Hot Prospect:|:standard_response'
     WHEN tag_name = 'OFP Training: Organizing Basics'         THEN 'Trainings:|:Organizing For Power:|:OFP Training: Organizing Basics:|:standard_response'
     WHEN tag_name = 'OFP Training: Storytelling'              THEN 'Trainings:|:Organizing For Power:|:OFP Training: Storytelling:|:standard_response'

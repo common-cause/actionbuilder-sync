@@ -209,16 +209,19 @@ new_from_sync AS (
     END AS removal_string,
     -- Build sync_field_identifier from tag_name
     CASE
-      WHEN sot.tag_name = 'Events Attended Past 6 Months'          THEN 'Participation:|:Event Attendance Summary:|:Events Attended Past 6 Months:|:number_response'
-      WHEN sot.tag_name = 'Most Recent Event Attended'              THEN 'Participation:|:Event Attendance History:|:Most Recent Event Attended:|:date_response'
-      WHEN sot.tag_name = 'First Event Attended'                    THEN 'Participation:|:Event Attendance History:|:First Event Attended:|:date_response'
-      WHEN sot.tag_name = 'Action Network Actions'                  THEN 'Participation:|:Online Actions Past 6 Months:|:Action Network Actions:|:number_response'
-      WHEN sot.tag_name = 'Action Network State Actions'            THEN 'Participation:|:Online Actions Past 6 Months:|:Action Network State Actions:|:number_response'
-      WHEN sot.tag_name = 'Top State Action Taker'                  THEN 'Participation:|:State Online Actions:|:Top State Action Taker:|:standard_response'
-      WHEN sot.tag_name = 'Phone Bank Calls Made'                   THEN 'Participation:|:Event Attendance Summary:|:Phone Bank Calls Made:|:number_response'
-      WHEN sot.tag_name = 'NewMode Actions'                         THEN 'Participation:|:Online Actions Past 6 Months:|:NewMode Actions:|:number_response'
-      WHEN sot.tag_name = 'Soapboxx Stories'                        THEN 'Participation:|:Storytelling:|:Soapboxx Stories:|:number_response'
-      WHEN sot.tag_name = 'Top National Action Network Activist'    THEN 'Participation:|:National Online Actions:|:Top National Action Network Activist:|:standard_response'
+      -- Taxonomy Block G (2026-08-19): keep this list byte-identical to the same
+      -- CASE in current_tag_values_bq_only.sql -- the twins drifted once already
+      -- (OFP branches, fixed in Block D).
+      WHEN sot.tag_name = 'Events Attended (Past 6 Months)'             THEN 'Activity:|:Events Attended (Past 6 Months):|:Events Attended (Past 6 Months):|:number_response'
+      WHEN sot.tag_name = 'Most Recent Event Attended'                  THEN 'Activity:|:Most Recent Event Attended:|:Most Recent Event Attended:|:date_response'
+      WHEN sot.tag_name = 'First Event Attended'                        THEN 'Activity:|:First Event Attended:|:First Event Attended:|:date_response'
+      WHEN sot.tag_name = 'Action Network Actions (Past 6 Months)'       THEN 'Activity:|:Action Network Actions (Past 6 Months):|:Action Network Actions (Past 6 Months):|:number_response'
+      WHEN sot.tag_name = 'State Action Network Actions (Past 6 Months)' THEN 'Activity:|:State Action Network Actions (Past 6 Months):|:State Action Network Actions (Past 6 Months):|:number_response'
+      WHEN sot.tag_name = 'Top State Action Taker'                      THEN 'Engagement:|:Top Performers:|:Top State Action Taker:|:standard_response'
+      WHEN sot.tag_name = 'Phone Bank Calls Made (All Time)'             THEN 'Activity:|:Phone Bank Calls Made (All Time):|:Phone Bank Calls Made (All Time):|:number_response'
+      WHEN sot.tag_name = 'NewMode Actions (All Time)'                   THEN 'Activity:|:NewMode Actions (All Time):|:NewMode Actions (All Time):|:number_response'
+      WHEN sot.tag_name = 'Soapboxx Stories (All Time)'                  THEN 'Activity:|:Soapboxx Stories (All Time):|:Soapboxx Stories (All Time):|:number_response'
+      WHEN sot.tag_name = 'Top National Action Network Activist'        THEN 'Engagement:|:Top Performers:|:Top National Action Network Activist:|:standard_response'
       WHEN sot.tag_name = 'Hot Prospect'                            THEN 'Engagement:|:Prospect Identification:|:Hot Prospect:|:standard_response'
       -- OFP universal responses (renamed 2026-08-17, taxonomy Block D). These
       -- branches were previously missing here but present in the _bq_only twin;
