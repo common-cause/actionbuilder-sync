@@ -421,6 +421,44 @@ is gone from staff view.** ⚠️ Watch out when auditing this by field NAME: th
 
 Rollback if ever needed: `addTagCategoryToCampaign` per (campaign, cat) and
 `updateTag(input: {tagId, archived: false})` per value.
+
+### Block H wave 2 — migrate + retire the two unblocked fields — ✅ EXECUTED 2026-08-20
+
+`Activism > Volunteer Activity Interest` (cat 15) and `Issues > Issue Bucket Interest`
+(cat 11) were the only two of the seven migration fields with no human dependency —
+1:1 value mappings and nothing touched since Nov 2025. Script: `scripts/block_h_wave2.py`
+(`add` / `delete` / `report`; work list read from BQ then re-verified per entity against
+the live API, so no identifiers are hardcoded and BQ ghosts can't drive a write).
+
+**Migrated 25 taggings, verified 25 legacy → 25 new by read-back**, then 35
+`removeTagCategoryFromCampaign` (cat 11 × 22, cat 15 × 13, all read back
+`isInCampaign: false`) + 7 `updateTag(archived: true)` on values 47/48/49/53/54/56/58.
+Legacy enablements **219 → 184**; new taxonomy untouched at 473; **12 of 23 legacy
+fields now fully retired**. `Issues` lost its last enabled field (cat 8 went in wave 1),
+so that section is gone from staff view, as `Expressed Volunteer Interest` was in wave 1.
+
+> ✅ **The open question is answered: `removeTagCategoryFromCampaign` HIDES taggings, it
+> does not destroy them — and it is fully reversible.** Tested on (cat 11, campaign 1),
+> which still had 6 live taggings: after the removal all six vanished from
+> `list_person_taggings`; after `addTagCategoryToCampaign` all six came back intact.
+> Two consequences:
+> 1. **Retiring the six duplicated-metric fields needs no tagging deletes and carries no
+>    data-loss risk.** Rollback is one `addTagCategoryToCampaign` per (campaign, cat).
+>    Wave 2 therefore skipped its `delete` phase deliberately — deleting is irreversible
+>    and buys nothing once the field is off. The phase remains in the script, and it
+>    refuses to delete any legacy tagging whose new-taxonomy copy isn't confirmed present.
+> 2. ⚠️ **De-enabling changes what the OSDI read path can see.** A hidden tagging is
+>    unresolvable by `list_person_taggings`, which is how `update_records` and
+>    `remove_list_taggings` resolve tagging ids. Never de-enable a field the pipeline
+>    still reads — de-enable only after the sync has stopped reading it (for the six
+>    duplicated metrics, Block G already cut the read path over).
+
+**Also found:** the 3 Michigan `Issue Bucket Interest` taggings in BQ are unreachable —
+their entity is campaign-less (confirmed by both `campaigns_entities` and a live
+`getEntity` against campaigns 7/1/15: *"not accessible… or not in this campaign"*). They
+are invisible to staff and to the API, so cat 11 had **zero reachable production
+taggings** — its only live ones were 6 in the Test campaign. Migration debt is therefore
+**108 real taggings across 5 fields**, not 136 across 7.
 >
 > **Cleared as a risk:** saved queries. All 37 non-temporary queries store tag **ids**, and only two touch legacy tags — `Test Events Filter` (Test, tag 40) and `Rob's Demo Filter` (campaign 10, tags 42/43). The 26 `Hot Prospects` queries use tag 75 and `Intro Phone Bank Search` uses tag 45, both id-stable. No organizer query breaks.
 >
