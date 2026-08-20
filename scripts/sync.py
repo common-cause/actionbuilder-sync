@@ -2279,6 +2279,143 @@ def remove_ot_duplicates(
     )
 
 
+def remove_list_taggings(
+    bq: BigQueryConnector,
+    ab: Optional[ActionBuilderConnector],
+    campaign_filter: Optional[str],
+    dry_run: bool,
+    limit: Optional[int],
+    sync_logger: Optional[SyncLogger] = None,
+    delay: float = 0.0,
+    source_view: Optional[str] = None,
+) -> None:
+    """
+    Delete every tagging of one campaign-local tag value from a set of entities.
+
+    The end-of-life path for a recruitment list: `Engagement > Recruitment List >
+    March on Washington` is written once for an event and cleared afterwards. Only
+    campaign-local values can be cleared this way — taggings on a UNIVERSAL field
+    are API-undeletable, which is why the recruitment field was created
+    campaign-local (see docs/march_on_washington_list.md).
+
+    Reads a feed of (campaign_interact_id, entity_interact_id, tag_name,
+    tag_interact_id) — pairs to CHECK, not tagging ids. For each row it lists the
+    entity's live taggings and deletes those matching the expected value. Resolving
+    live means the op does not depend on taggable_logbook replication (which lags,
+    and never reflects our deletes at all) or on sync_log, which records add_tagging
+    with a NULL tagging_interact_id.
+
+    Safety: a tagging is deleted only when BOTH its name and its tag interact_id
+    match the feed row. Name alone is not enough — names are not unique across the
+    taxonomy (a "Storytelling" collision already exists, and the Block H migration
+    deliberately ran duplicate names across two taxonomies). Universal tag ids are
+    refused outright.
+
+    Idempotent: re-running finds nothing to delete and reports the entity as already
+    clear. --source defaults to march_on_washington_removal.
+    """
+    view = source_view or 'march_on_washington_removal'
+    logger.info(f'remove_list_taggings: fetching rows from {view}...')
+
+    sql = f'SELECT * FROM `{BQ_PROJECT}.{BQ_DATASET}.{view}`'
+    if limit:
+        sql += f' LIMIT {limit}'
+    rows = _query(bq, sql)
+
+    if not rows:
+        logger.info('remove_list_taggings: no rows to process')
+        return
+
+    logger.info(f'remove_list_taggings: {len(rows)} entity/campaign pair(s) to check')
+    n_deleted = n_clear = n_err = n_skip = 0
+
+    for row in rows:
+        campaign_id = str(row['campaign_interact_id'])
+        entity_id = str(row['entity_interact_id'])
+        want_name = str(row['tag_name'])
+        want_tag_id = str(row['tag_interact_id'])
+
+        if campaign_filter and campaign_id != campaign_filter:
+            continue
+
+        label = f'entity={entity_id[:8]}... campaign={campaign_id[:8]}...'
+
+        if want_tag_id in UNIVERSAL_TAG_IDS_NO_DELETE:
+            logger.warning(
+                f'  Refusing to delete universal tag {want_tag_id[:8]}... for {label}: '
+                f'universal taggings are API-undeletable. Check the feed.'
+            )
+            n_skip += 1
+            continue
+
+        try:
+            taggings = ab.list_person_taggings(campaign_id, entity_id)
+        except Exception as e:
+            logger.error(f'  ERROR listing taggings for {label}: {e}')
+            n_err += 1
+            if sync_logger:
+                sync_logger.log('delete_tagging', entity_id, campaign_id, 'error',
+                                tag_name=want_name, error_detail=str(e)[:500])
+            continue
+
+        # Match on name AND tag interact_id — see docstring.
+        matches = []
+        for t in taggings:
+            if t.get('action_builder:name') != want_name:
+                continue
+            tag_href = t.get('_links', {}).get('osdi:tag', {}).get('href', '')
+            if want_tag_id not in tag_href:
+                continue
+            identifiers = t.get('identifiers', [])
+            if identifiers and str(identifiers[0]).startswith('action_builder:'):
+                matches.append(str(identifiers[0])[len('action_builder:'):])
+
+        if not matches:
+            n_clear += 1
+            logger.debug(f'  Already clear: {label}')
+            if delay:
+                time.sleep(delay)
+            continue
+
+        for tagging_id in matches:
+            if dry_run:
+                logger.info(
+                    f'  [DRY-RUN] Would delete tagging {tagging_id[:8]}... '
+                    f'({want_name}) for {label}'
+                )
+                n_deleted += 1
+                continue
+            try:
+                status = ab.delete_tagging(campaign_id, want_tag_id, tagging_id)
+                n_deleted += 1
+                if sync_logger:
+                    sync_logger.log(
+                        operation='delete_tagging',
+                        entity_interact_id=entity_id,
+                        campaign_interact_id=campaign_id,
+                        status=status,
+                        tag_interact_id=want_tag_id,
+                        tagging_interact_id=tagging_id,
+                        tag_name=want_name,
+                    )
+            except Exception as e:
+                logger.error(f'  ERROR deleting tagging {tagging_id[:8]}... for {label}: {e}')
+                n_err += 1
+                if sync_logger:
+                    sync_logger.log('delete_tagging', entity_id, campaign_id, 'error',
+                                    tag_interact_id=want_tag_id,
+                                    tagging_interact_id=tagging_id,
+                                    tag_name=want_name, error_detail=str(e)[:500])
+
+        if delay:
+            time.sleep(delay)
+
+    logger.info(
+        f'remove_list_taggings: done. deleted={n_deleted} already_clear={n_clear} '
+        f'err={n_err} skipped={n_skip}'
+    )
+
+
 OPERATIONS = {
     'update_records': update_records,
     'insert_new_records': insert_new_records,
@@ -2296,6 +2433,7 @@ OPERATIONS = {
     'connect_entities': connect_entities,
     'insert_organizing_team': insert_organizing_team,
     'assign_organizers': assign_organizers,
+    'remove_list_taggings': remove_list_taggings,
 }
 
 
@@ -2351,9 +2489,11 @@ def main() -> None:
         '--source',
         metavar='VIEW',
         help=(
-            'connect_entities only: read from this actionbuilder_sync view instead '
-            'of organizing_team_connects. The view must emit campaign_interact_id, '
-            'entity_interact_id and sync_string (e.g. march_on_washington_connects).'
+            'connect_entities / remove_list_taggings: read from this actionbuilder_sync '
+            'view instead of the default (organizing_team_connects / '
+            'march_on_washington_removal). connect_entities needs campaign_interact_id, '
+            'entity_interact_id, sync_string; remove_list_taggings needs '
+            'campaign_interact_id, entity_interact_id, tag_name, tag_interact_id.'
         ),
     )
     args = parser.parse_args()
@@ -2374,8 +2514,16 @@ def main() -> None:
     bq = _make_bq_client()
 
     # Build AB client only when not dry-running (no API calls will be made)
-    if args.dry_run:
-        ab: Optional[ActionBuilderConnector] = None
+    # Most ops need no client at all under --dry-run. remove_list_taggings is the
+    # exception: it resolves tagging ids by READING the API, so without a client its
+    # dry run can only report errors. Give it a read-only client — its DELETEs are
+    # still gated on dry_run inside the op.
+    ab: Optional[ActionBuilderConnector]
+    if args.dry_run and args.operation == 'remove_list_taggings':
+        ab = _make_ab_client()
+        logger.info('DRY-RUN mode: read-only API calls allowed; no writes will be made')
+    elif args.dry_run:
+        ab = None
         logger.info('DRY-RUN mode: no API calls will be made')
     else:
         ab = _make_ab_client()
@@ -2386,13 +2534,13 @@ def main() -> None:
 
     op_fn = OPERATIONS[args.operation]
     kwargs: Dict[str, Any] = {}
-    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'remove_ot_duplicates', 'remove_suppressed', 'prepare_email_data', 'prepare_phone_data', 'backfill_region', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes', 'connect_entities', 'insert_organizing_team', 'assign_organizers'):
+    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'remove_ot_duplicates', 'remove_suppressed', 'prepare_email_data', 'prepare_phone_data', 'backfill_region', 'snapshot_tag_state', 'update_records', 'apply_assessments', 'insert_new_records', 'append_notes', 'connect_entities', 'insert_organizing_team', 'assign_organizers', 'remove_list_taggings'):
         kwargs['delay'] = args.delay
-    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'remove_ot_duplicates', 'remove_suppressed', 'backfill_region', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes', 'connect_entities', 'insert_organizing_team', 'assign_organizers'):
+    if args.operation in ('remove_records', 'remove_ep_externals', 'remove_mobilize_externals', 'remove_ot_duplicates', 'remove_suppressed', 'backfill_region', 'insert_new_records', 'update_records', 'snapshot_tag_state', 'apply_assessments', 'append_notes', 'connect_entities', 'insert_organizing_team', 'assign_organizers', 'remove_list_taggings'):
         kwargs['sync_logger'] = sync_logger
     if args.operation == 'assign_organizers':
         kwargs['organizer_filter'] = args.organizer
-    if args.operation == 'connect_entities':
+    if args.operation in ('connect_entities', 'remove_list_taggings'):
         kwargs['source_view'] = args.source
     op_fn(bq, ab, campaign_filter, args.dry_run, args.limit, **kwargs)
 

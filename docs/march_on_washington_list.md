@@ -94,6 +94,51 @@ The 141 (not 150) assignments are correct — 9 of the list were already in camp
 as OFP attendees and **already connected to Carlos**, so `organizing_team_assignments`
 correctly anti-joined them out. Zero unexplained.
 
+## Clearing the tag after the march (march is 2026-08-28)
+
+Run on/after **2026-08-29**:
+
+```bash
+python scripts/sync.py remove_list_taggings --dry-run --delay 0.3   # preview first
+python scripts/sync.py remove_list_taggings --delay 0.3
+```
+
+This deletes only the `March on Washington` tagging. **Campaign-26 membership and the
+organizer connection to Carlos are deliberately left in place** — after the march these
+are his contacts, and dropping them would lose the connection history too. Change that
+deliberately if it isn't wanted.
+
+Deletion works at all only because the field was created **campaign-local**; taggings on
+a universal field are API-undeletable.
+
+`models/march_on_washington_removal.sql` emits (campaign, entity) pairs to **check**, not
+tagging ids to delete. The op resolves each live tagging id from the AB API, because our
+tagging ids aren't reliably available from BQ — `sync.py` logs `add_tagging` with a NULL
+`tagging_interact_id`, and `taggable_logbook` replication lags (tag 131 still hadn't
+landed in BQ hours after creation). Resolving live also makes the op idempotent and
+404-safe. Candidates come from the frozen list (scoped to campaign 26, where every write
+went) unioned with `taggable_logbook` in any campaign, which catches anything hand-added
+in the UI — the value is also activated in MD/VA/DC.
+
+**Safety:** a tagging is deleted only when **both** its name and its tag interact_id match
+the feed row. Name alone is not sufficient — names are not unique across this taxonomy
+(the "Storytelling" collision, and Block H deliberately ran duplicate names across two
+taxonomies). Universal tag ids are refused outright.
+
+`--dry-run` on this op builds a **read-only** AB client rather than no client, since it
+has to read to preview anything; the DELETEs stay gated on `dry_run`.
+
+**Verified 2026-08-20** by a delete/restore canary on entity `00d4c45b`: the tagging was
+deleted, confirmed gone by API read-back with the entity's other three tags untouched,
+then restored and confirmed back. The feed returned to 150 afterwards.
+
+That canary is why `already_removed` compares the **latest** delete against the **latest**
+add instead of treating any past delete as final. A naive filter would have permanently
+excluded the restored canary from the real run — it would have kept the tag forever.
+
+The value name carries no year, so a future march reuses `March on Washington` rather
+than accumulating dated values. Clear the taggings, keep the value.
+
 ## Code changes
 
 - **`models/march_on_washington_targets.sql`** (new) — the ranking.
