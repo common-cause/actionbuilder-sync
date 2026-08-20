@@ -8,11 +8,16 @@
 -- so it reads clearly in the organizer's Connections tab. Which organizer is captured
 -- by the connection's other endpoint, not by the (constant) tag value.
 --
--- Routing: member entity -> its emails -> ofp_universe.state (zip-derived) ->
--- organizer_state_map seed. The seed covers every state/territory the zip crosswalk
--- can produce: the 24 staffed states split across the four regional organizers, and
--- (since 2026-07-29) all unstaffed states + territories routed to Tiffany Rubio
--- (organizing intern). Only members with no zip-derived state are left unassigned.
+-- Routing: member entity -> state -> organizer_state_map seed. State resolves in two
+-- steps: ofp_universe (zip-derived, for OFP attendees) first, then the member's most
+-- recent AB address as a fallback. The fallback was added 2026-08-20 because campaign
+-- 26 is no longer OFP-only — the March on Washington recruitment list is the first
+-- non-OFP population, and those members have no ofp_universe row at all. It also
+-- picked up 15 previously-unroutable OFP members whose Mobilize record had no zip.
+-- The seed covers every state/territory the zip crosswalk can produce: the 24 staffed
+-- states split across the four regional organizers, and (since 2026-07-29) all
+-- unstaffed states + territories routed to Tiffany Rubio (organizing intern). Only
+-- members with neither an OFP state nor an AB address state are left unassigned.
 -- See KL "C&O National Organizing Team — State Coverage".
 --
 -- Idempotency / replication lag:
@@ -87,12 +92,48 @@ member_emails AS (
   WHERE em.email IS NOT NULL
 ),
 
--- Zip-derived state per member, via ofp_universe (they're all OFP attendees)
-member_state AS (
+-- Zip-derived state per member, via ofp_universe (OFP attendees). Collapsed to one
+-- row per member on the same `ORDER BY state` tiebreak `routed` used to apply, so
+-- existing OFP-routed members keep exactly the organizer they had.
+ofp_state AS (
   SELECT DISTINCT me.member_interact_id, u.state
   FROM member_emails me
   JOIN {{ ref('ofp_universe') }} u ON u.email_normalized = me.email
   WHERE u.state IS NOT NULL
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY me.member_interact_id ORDER BY u.state) = 1
+),
+
+-- Fallback for members who are not OFP attendees — campaign 26 is no longer
+-- OFP-only (the March on Washington recruitment list is the first non-OFP
+-- population) — and for OFP attendees whose Mobilize record carried no zip.
+-- Source: the state on the member's most recent AB address.
+address_state AS (
+  SELECT
+    e.interact_id AS member_interact_id,
+    UPPER(TRIM(a.state)) AS state
+  FROM live_members m
+  JOIN actionbuilder_cleaned.cln_actionbuilder__entities e
+    ON e.interact_id = m.member_interact_id
+  JOIN (
+    SELECT
+      owner_id,
+      state,
+      ROW_NUMBER() OVER (PARTITION BY owner_id ORDER BY updated_at DESC, id DESC) AS rn
+    FROM actionbuilder_cleaned.cln_actionbuilder__addresses
+    WHERE owner_type = 'Entity'
+      AND state IS NOT NULL
+  ) a ON a.owner_id = e.id AND a.rn = 1
+),
+
+-- OFP state wins where present; AB address state fills the gap.
+member_state AS (
+  SELECT
+    m.member_interact_id,
+    COALESCE(o.state, a.state) AS state
+  FROM live_members m
+  LEFT JOIN ofp_state     o ON o.member_interact_id = m.member_interact_id
+  LEFT JOIN address_state a ON a.member_interact_id = m.member_interact_id
+  WHERE COALESCE(o.state, a.state) IS NOT NULL
 ),
 
 -- Route to the assigned organizer; one organizer per member (deterministic on the

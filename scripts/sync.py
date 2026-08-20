@@ -1778,26 +1778,33 @@ def connect_entities(
     limit: Optional[int],
     sync_logger: Optional[SyncLogger] = None,
     delay: float = 0.0,
+    source_view: Optional[str] = None,
 ) -> None:
     """
-    Connect existing AB entities to the Organizing Team campaign and stamp their
-    universal OFP competencies.
+    Connect existing AB entities to a campaign and stamp tags in the same call.
 
-    Reads actionbuilder_sync.organizing_team_connects (one row per
+    Reads actionbuilder_sync.organizing_team_connects by default (one row per
     entity/competency, all campaign_interact_id = Organizing Team). Groups by
     entity and calls update_entity_with_tags, which POSTs the entity's identifiers
     to the campaign — connecting it (new campaigns_entities row) and adding the
-    universal OFP tags in a single call. Because the field is universal, the value
-    is shared network-wide; no campaign-local fields are written.
+    tags in a single call. For the default OFP feed the field is universal, so the
+    value is shared network-wide; no campaign-local fields are written.
+
+    source_view overrides the input view for one-off connect+tag pushes that reuse
+    this same mechanism — e.g. march_on_washington_connects, which connects a frozen
+    recruitment list to campaign 26 and stamps a campaign-local marker tag. Any
+    override must emit the same columns: campaign_interact_id, entity_interact_id,
+    sync_string.
 
     Logs connect_entity (once per entity) and add_tagging (per tag) to sync_log.
     The connect_entity rows let organizing_team_connects skip already-connected
     entities on the next run (covers BQ replication lag).
     """
-    logger.info('connect_entities: fetching tag map and rows...')
+    view = source_view or 'organizing_team_connects'
+    logger.info(f'connect_entities: fetching tag map and rows from {view}...')
     tag_map = _get_tag_map(bq)
 
-    sql = f'SELECT * FROM `{BQ_PROJECT}.{BQ_DATASET}.organizing_team_connects`'
+    sql = f'SELECT * FROM `{BQ_PROJECT}.{BQ_DATASET}.{view}`'
     if limit:
         sql += f' LIMIT {limit}'
     rows = _query(bq, sql)
@@ -2340,6 +2347,15 @@ def main() -> None:
             'skipped. Use for staged rollout or re-running one organizer.'
         ),
     )
+    parser.add_argument(
+        '--source',
+        metavar='VIEW',
+        help=(
+            'connect_entities only: read from this actionbuilder_sync view instead '
+            'of organizing_team_connects. The view must emit campaign_interact_id, '
+            'entity_interact_id and sync_string (e.g. march_on_washington_connects).'
+        ),
+    )
     args = parser.parse_args()
 
     # Resolve state name aliases for --campaign
@@ -2376,6 +2392,8 @@ def main() -> None:
         kwargs['sync_logger'] = sync_logger
     if args.operation == 'assign_organizers':
         kwargs['organizer_filter'] = args.organizer
+    if args.operation == 'connect_entities':
+        kwargs['source_view'] = args.source
     op_fn(bq, ab, campaign_filter, args.dry_run, args.limit, **kwargs)
 
     # Flush any remaining buffered log rows
