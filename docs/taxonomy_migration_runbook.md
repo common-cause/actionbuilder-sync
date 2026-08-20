@@ -399,8 +399,28 @@ Cutover mechanics & expectations:
 >
 > **Corrections to the steps:**
 > 1. **Migration debt is 135 taggings across 7 fields, not ~120** — and `Action Team Opt-In` (cat 10, tag 46) is **still in active use** (89 taggings, most recent 2026-08-18), so it grows until PA is told to use `Local Groups > PA Action Team`. Counts: Action Team Opt-In **89** · Volunteer Activity Interest (cat 15) **19** · Issue Bucket Interest (cat 11) **9** · Inactives Phonebank RSVP Date (cat 13) **9** · `Million Conversations Prospect` Leader Prospect (cat 25) **4** · Recent Activism (cat 2) **3** · Nebraska Regional Group (cat 17) **2**.
-> 2. **Twelve fields are free to retire today** (zero live taggings, no migration, no dependency on H0): cats **4** (29 unused enums — the GA per-event question is a Calendar Events matter, not these), **23** (values already archived; the EMPTY field still renders in 22 campaigns), **14**, **12**, **20**, **19**, **1**, **3**, **5**, **8**. Doing these first is the fastest visible de-clutter.
-> 3. **Retiring = archive the values AND `removeTagCategoryFromCampaign` per campaign.** Archiving alone only hides a value from the picker; the field keeps rendering. Total to unwind: **261 field×campaign enablements** across the 23 legacy fields (per-campaign legacy counts: 9–13 for a typical state, 13 for IL/IN, 6 for VA/DC, 1 for campaign 26). Test one removal on campaign 1 first — whether existing taggings vanish from the profile when a field leaves a campaign is not yet verified.
+> 2. **TEN fields were free to retire (not twelve — 23 legacy = 7 migrate + 10 free + 6 blocked)** — zero live taggings, no migration, no dependency on H0: cats **4** (29 unused enums — the GA per-event question is a Calendar Events matter, not these), **23** (values already archived; the EMPTY field still rendered in 22 campaigns), **14**, **12**, **20**, **19**, **1**, **3**, **5**, **8**. ✅ **EXECUTED 2026-08-20** — see the wave-1 log below.
+> 3. **Retiring = archive the values AND `removeTagCategoryFromCampaign` per campaign.** Archiving alone only hides a value from the picker; the field keeps rendering. Started at **261 field×campaign enablements** across the 23 legacy fields; wave 1 pulled 42, leaving **219**. Per-campaign legacy counts went 9–13 → **7–10** (Test 10 → 6). Whether existing taggings vanish from the profile when their field leaves a campaign is STILL unverified — it does not arise for wave 1 (all zero-tagging) but must be tested before the six duplicated-metric fields come off.
+
+### Block H wave 1 — retire the 10 dead fields — ✅ EXECUTED 2026-08-20
+
+Sequence: canary `removeTagCategoryFromCampaign(campaignId: 1, tagCategoryId: 3)` → read back
+`isInCampaign: false`, `associatedCampaignIds: []` → then 41 more removals (**42 total, all verified
+false from their own mutation response**) → then **37 orphan value archives** via
+`updateTag(input: {tagId, archived: true})`, canary on tag 52 first (**37/37**, zero failures).
+Values archived: cat 4 ids 8–36 (29), cat 12 ids 50/96/97, cat 14 id 52, cat 19 id 66, cat 20 ids
+70/71/72.
+
+Independent verification (not the mutation responses): `list_tags` on Illinois + Test shows none of
+the retired fields in the response picker, and a fresh `getTagGroups` pass shows all ten fields at
+`associatedCampaignIds: []` with 0 live values, the new taxonomy untouched (469 enablements, per
+campaign still 18/19/17). **`Expressed Volunteer Interest` lost its last field, so that whole section
+is gone from staff view.** ⚠️ Watch out when auditing this by field NAME: the retired
+`Activism > Organizing For Power` (cat 23) and the live universal `Trainings > Organizing For Power`
+(cat 29) share a field name — check the SECTION, or a name-keyed check reports a false positive.
+
+Rollback if ever needed: `addTagCategoryToCampaign` per (campaign, cat) and
+`updateTag(input: {tagId, archived: false})` per value.
 >
 > **Cleared as a risk:** saved queries. All 37 non-temporary queries store tag **ids**, and only two touch legacy tags — `Test Events Filter` (Test, tag 40) and `Rob's Demo Filter` (campaign 10, tags 42/43). The 26 `Hot Prospects` queries use tag 75 and `Intro Phone Bank Search` uses tag 45, both id-stable. No organizer query breaks.
 >
