@@ -104,9 +104,15 @@ python scripts/sync.py remove_list_taggings --delay 0.3
 ```
 
 This deletes only the `March on Washington` tagging. **Campaign-26 membership and the
-organizer connection to Carlos are deliberately left in place** — after the march these
-are his contacts, and dropping them would lose the connection history too. Change that
-deliberately if it isn't wanted.
+organizer connection to Carlos stay** — decided by Rob 2026-08-20: the 150 are a standing
+pool for Carlos to keep organizing, not a single-event list. Don't "tidy up" by removing
+them from 26 afterwards; that would also destroy the connection history. Settled, not a
+default.
+
+So after the removal runs, campaign 26 permanently contains two populations: OFP training
+attendees and this DMV recruitment pool. Only the tag distinguishes them, and the tag is
+what gets cleared — after 8/29 the only marker of how these 150 arrived is
+`march_on_washington_list` plus their `connect_entity` rows in `sync_log`.
 
 Deletion works at all only because the field was created **campaign-local**; taggings on
 a universal field are API-undeletable.

@@ -12,8 +12,9 @@
 -- creation). Resolving live also makes the op idempotent and 404-safe.
 --
 -- Removes the TAG only. Campaign-26 membership and the organizer connection to Carlos
--- are deliberately left in place — after the march these people are his contacts, and
--- dropping them would also lose the connection history. Revisit deliberately if not wanted.
+-- stay — decided by Rob 2026-08-20: the 150 are a standing pool for Carlos to keep
+-- organizing, not a single-event list. Do not "tidy up" by removing them from 26; that
+-- would also destroy the connection history. This is settled, not a default.
 --
 -- Two candidate sources, unioned:
 --   (a) the frozen list, scoped to campaign 26 — every tagging we wrote went through 26
