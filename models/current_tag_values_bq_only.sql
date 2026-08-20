@@ -63,6 +63,26 @@ tag_values_with_notes AS (
     AND gn.owner_type = 'TaggableLogbook'
 
   WHERE t.status = 1  -- Only active tags
+    -- Taxonomy Block H0 (2026-08-20): drop the four LEGACY twins of the Block G
+    -- value names. These four names each exist twice with status = 1 -- once in
+    -- the legacy Participation section, once in the Block B/C home -- and every
+    -- read below (the sync_field_identifier CASE, updates_needed's tag_name
+    -- pivots, the overlay's name join) keys on the NAME, so a legacy tagging was
+    -- being reported as the new field. Measured on the cutover night: the two
+    -- universal Activity dates got 17 and 35 writes instead of ~20,000 each
+    -- because ~20K legacy taggings made them look already-correct, and the Top
+    -- Performer rotation deleted the LEGACY taggings (399 on tag 64, 45 on 74)
+    -- while the new Engagement copies accumulated with no removal path.
+    --
+    -- Nothing writes these four any more (Block G moved every feed), so excluding
+    -- them here retires them from the pipeline in one place. Do NOT try to solve
+    -- this by archiving them in AB: value archival does not reliably replicate to
+    -- cln_actionbuilder__tags.status (see CLAUDE.md, BQ replication gap #3).
+    --   40  Participation > Event Attendance History  > First Event Attended
+    --   41  Participation > Event Attendance History  > Most Recent Event Attended
+    --   64  Participation > State Online Actions      > Top State Action Taker
+    --   74  Participation > National Online Actions   > Top National Action Network Activist
+    AND t.id NOT IN (40, 41, 64, 74)
 )
 
 SELECT

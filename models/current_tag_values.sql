@@ -64,6 +64,43 @@ sync_log_tags AS (
   WHERE sl.operation IN ('add_tagging', 'delete_tagging')
     AND sl.status IN ('ok', '404')
     AND sl.tag_name IS NOT NULL
+    -- Taxonomy Block H0 (2026-08-20): the same four colliding names, handled on
+    -- the sync_log side. current_tag_values_bq_only now excludes the legacy tags
+    -- 40/41/64/74, but this overlay is keyed on (entity, campaign, tag_name), so
+    -- without this filter every PRE-cutover write to a legacy twin would come
+    -- back as a sync_only_tags row and re-mask the new field -- the exact bug the
+    -- exclusion is there to fix.
+    --
+    -- The discriminator has to be TIME, not the logged id. Before Block G pinned
+    -- BLOCK_G_TAG_IDS, _get_tag_map resolved these four names off an unordered
+    -- query, so pre-cutover rows carry a COIN-FLIPPED tag_interact_id while the
+    -- sync string still pointed at Participation. Measured 2026-08-20: 596 (8/18)
+    -- + 553 (8/19) 'First Event Attended' adds and 589 (8/19) 'Most Recent Event
+    -- Attended' adds are logged under the NEW tag uuid but physically landed in
+    -- the LEGACY field. An id-only filter let all 1,166 through and left the
+    -- backfill masked for those entities.
+    --
+    -- So: for these four names trust only ops from the cutover deploy onward
+    -- (2026-08-19 ~19:00 UTC, which is also just before that evening's Test
+    -- canary), and keep the id check as a belt in case the override table is ever
+    -- dropped. Everything earlier describes the legacy field and is discarded.
+    AND NOT (
+      sl.tag_name IN (
+        'First Event Attended',
+        'Most Recent Event Attended',
+        'Top State Action Taker',
+        'Top National Action Network Activist'
+      )
+      AND (
+        sl.executed_at < TIMESTAMP('2026-08-19 19:00:00+00')
+        OR COALESCE(sl.tag_interact_id, '') NOT IN (
+          '54cac19b-7229-4aed-9b8c-2ff04a188076',  -- 101 Activity > First Event Attended
+          '52af6394-72d8-470d-a3a2-7a4ce1e5d3d2',  -- 102 Activity > Most Recent Event Attended
+          'dbd1eb1d-4037-451a-9a4e-32d13a4cd255',  -- 123 Engagement > Top Performers > Top State Action Taker
+          '373790c0-71be-4d41-a65e-8d1a3047147c'   -- 124 Engagement > Top Performers > Top National ANA
+        )
+      )
+    )
 ),
 
 -- Most recent sync_log entry per entity+campaign+tag
@@ -141,6 +178,12 @@ tag_meta AS (
   SELECT id, interact_id, name, tag_type, tag_category_id
   FROM actionbuilder_cleaned.cln_actionbuilder__tags
   WHERE status = 1
+    -- Block H0 (2026-08-20): new_from_sync joins this on tm.name = sot.tag_name,
+    -- so leaving the legacy twins in makes that join match TWICE for the four
+    -- colliding names -- duplicating every sync-only row and stamping some of
+    -- them with the legacy tag_id / tag_category_id. Same four ids excluded in
+    -- current_tag_values_bq_only; keep the two lists in step.
+    AND id NOT IN (40, 41, 64, 74)
 ),
 
 -- UNION 1: BQ snapshot rows where sync_log says add_tagging (override value)

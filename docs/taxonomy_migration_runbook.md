@@ -308,11 +308,15 @@ Field `Shifted` → `Election Protection Shifts`; value `2024` (tag 45, 1,428 ta
 
 ---
 
-## Block G — Pipeline cutover PR (Phase 3; one PR, merged before that night's nightly)
+## Block G — Pipeline cutover PR (Phase 3; one PR, merged before that night's nightly) — ✅ EXECUTED 2026-08-19 (commit `5bd0193`); cutover nightly ran clean 2026-08-19/20
 
 Prereqs: Blocks A–F done; Activity fields exist + enabled everywhere (B); `1MC Prospect Status` enabled in campaign 26 (A).
 
-> **PR authored 2026-08-19 on branch `block-g-pipeline-cutover` — NOT deployed.** Merging + `bash dbt.sh run` before 10 PM ET is what starts the cutover nightly.
+> ✅ **Cutover nightly verified 2026-08-20.** Ran 02:11–12:59 UTC (**10 h 48 m** — inside the corrected 13–14 h expectation), all 8 steps. **54,259 `add_tagging` ok / 0 errors**, every write under a new name, and — checked by joining `sync_log.tag_interact_id` back to `cln_actionbuilder__tags`, not by name — every write landed on the new tag id (101–108, 123/124, 129/130, 45, 75, 82, 86, 93/94). **`BLOCK_G_TAG_IDS` is proven at scale, not just on the Test canary.** 44,326 distinct entities = **83% of the 53,599 V3 baseline** in one night. V2 `phantom_tag_writes` = 0. Also: the EP shift backfill happened by itself in the first run (`EP Shift Worked 2026` 1,487 / `2022` 1,058 / `2024` 3), so that one-time follow-up is done, and 8/19's 8,494 delete-404 wave fell to **35** — it was replication lag, self-cleared, no suppression gap.
+>
+> ⚠️ **But the cutover is only ~83% complete, and two Block-G-adjacent defects were found in the 2026-08-20 audit — read Block H's prereqs before archiving anything.** Summary: the WRITE path was made collision-safe, the READ path was not, so the four duplicated value names (`First Event Attended`, `Most Recent Event Attended`, `Top State Action Taker`, `Top National Action Network Activist`) still resolve by name. Detail + fix in Block H below.
+>
+> **PR authored 2026-08-19 on branch `block-g-pipeline-cutover`.** Merging + `bash dbt.sh run` before 10 PM ET is what started the cutover nightly.
 >
 > Prereqs re-verified against live AB (`list_tags`), not from this doc: all 8 Activity fields + both Top Performers values + all three `1MC Prospect Status` values + all three `EP Shift Worked *` values are present and correctly typed. `1MC Prospect Status` is **universal** and visible in every campaign checked (1/12/16/21/26) — the earlier "Test-only enablement" note is stale.
 >
@@ -383,6 +387,24 @@ Cutover mechanics & expectations:
 ---
 
 ## Block H — Migrate manual data, then retire (Phase 5)
+
+> **Audited against live AB 2026-08-20 (post-cutover). Two hard prereqs and three corrections to the steps below — this note is right where it disagrees with them.** Full write-up: artifact "Can We Retire the Old Fields?" (`https://claude.ai/code/artifact/539cdc5f-a394-4dee-9ee7-b830403cf14f`).
+>
+> **Prereq H0 — fix the read-path name collision FIRST (dbt only, no UI).** `current_tag_values_bq_only.sql:85–105` (and the `sot.tag_name` twin at `current_tag_values.sql:211–223`) map taggings to sync-field identifiers with a `CASE` on **tag_name**. Four names are live in BOTH taxonomies with `status=1` — 40/101 `First Event Attended`, 41/102 `Most Recent Event Attended`, 64/123 `Top State Action Taker`, 74/124 `Top National Action Network Activist` — so a legacy tagging is reported as the NEW field. Measured on entity `0117cc6d` / Michigan: tag **40** (cat 6, Participation) carries `sync_field_identifier = 'Activity:|:First Event Attended:|:…:|:date_response'`, `current_value 2026-07-08`. Consequences, both measured on the cutover night:
+>   - **The Activity date fields never populate** — 17 (`First`) and 35 (`Most Recent`) writes vs ~20,009 entities per date. Profile spot-checks show Participation dates present, Activity dates absent.
+>   - **Top Performer removals delete the LEGACY tagging** — 399 deletes on tag **64** and 45 on tag **74** (both Participation), while the new Engagement copies accumulate with no removal path. The top-50 rotation depends on that path.
+>   Fix = re-key those four branches on the tag interact_id, exactly as Block D did for `ofp_attendance`. Verify next morning: date writes in the thousands, deletes hitting 123/124 not 64/74.
+>
+> **Prereq H1 — do NOT expect archiving to change pipeline behaviour.** Value archival does not reliably reach BQ: `Activism > Organizing For Power` tags 76–79 report `archived: true` in AB GraphQL but are still `status = 1` in `cln_actionbuilder__tags` with `updated_at` untouched since creation (2026-03-27), two months after being archived. Older archives (1–5, 37–39, 85) did land as `status = 0`. **Third replication gap** — see CLAUDE.md. So archiving is UI hygiene only; the read path must be fixed in code (H0).
+>
+> **Corrections to the steps:**
+> 1. **Migration debt is 135 taggings across 7 fields, not ~120** — and `Action Team Opt-In` (cat 10, tag 46) is **still in active use** (89 taggings, most recent 2026-08-18), so it grows until PA is told to use `Local Groups > PA Action Team`. Counts: Action Team Opt-In **89** · Volunteer Activity Interest (cat 15) **19** · Issue Bucket Interest (cat 11) **9** · Inactives Phonebank RSVP Date (cat 13) **9** · `Million Conversations Prospect` Leader Prospect (cat 25) **4** · Recent Activism (cat 2) **3** · Nebraska Regional Group (cat 17) **2**.
+> 2. **Twelve fields are free to retire today** (zero live taggings, no migration, no dependency on H0): cats **4** (29 unused enums — the GA per-event question is a Calendar Events matter, not these), **23** (values already archived; the EMPTY field still renders in 22 campaigns), **14**, **12**, **20**, **19**, **1**, **3**, **5**, **8**. Doing these first is the fastest visible de-clutter.
+> 3. **Retiring = archive the values AND `removeTagCategoryFromCampaign` per campaign.** Archiving alone only hides a value from the picker; the field keeps rendering. Total to unwind: **261 field×campaign enablements** across the 23 legacy fields (per-campaign legacy counts: 9–13 for a typical state, 13 for IL/IN, 6 for VA/DC, 1 for campaign 26). Test one removal on campaign 1 first — whether existing taggings vanish from the profile when a field leaves a campaign is not yet verified.
+>
+> **Cleared as a risk:** saved queries. All 37 non-temporary queries store tag **ids**, and only two touch legacy tags — `Test Events Filter` (Test, tag 40) and `Rob's Demo Filter` (campaign 10, tags 42/43). The 26 `Hot Prospects` queries use tag 75 and `Intro Phone Bank Search` uses tag 45, both id-stable. No organizer query breaks.
+>
+> **Also stale (Block I):** `master_load_qualifiers.sql:832–836` still emits OLD field-name label columns (`action_network_field`, `events_field`, `pb_field`, `first_event_field`, `mr_event_field`), carried through `deduplicated_names_to_load_bq_only.sql:167–171,362–366`. Labels only — no read path — but they are wrong names now.
 
 1. One-off script rewrites the ~120 live human taggings to the new homes: PA Action Team Opt-In (86) → `PA Action Team Member`; Volunteer Activity Interest (19) + Expressed Volunteer Interest (7) → `Interest: …` values; Issues (9) → `Issue: …`; NE Chapters (2) → `NE Group: …` (NE team confirms the District-8 triplets collapse). Old taggings are campaign-local → delete via API after re-stamping.
 2. D5 drops (Rob decided 2026-08-13; courtesy check done — owners Cheech Sorilla ×3 Recent Activism, Flose LaPierre + Franceska Edouard ×10 RSVP Dates, newest Nov 2025): ping or waive, then no migration — just archive.
