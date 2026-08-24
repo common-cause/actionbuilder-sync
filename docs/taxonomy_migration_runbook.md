@@ -400,7 +400,7 @@ Cutover mechanics & expectations:
 > **Corrections to the steps:**
 > 1. **Migration debt is 135 taggings across 7 fields, not ~120** — and `Action Team Opt-In` (cat 10, tag 46) is **still in active use** (89 taggings, most recent 2026-08-18), so it grows until PA is told to use `Local Groups > PA Action Team`. Counts: Action Team Opt-In **89** · Volunteer Activity Interest (cat 15) **19** · Issue Bucket Interest (cat 11) **9** · Inactives Phonebank RSVP Date (cat 13) **9** · `Million Conversations Prospect` Leader Prospect (cat 25) **4** · Recent Activism (cat 2) **3** · Nebraska Regional Group (cat 17) **2**.
 > 2. **TEN fields were free to retire (not twelve — 23 legacy = 7 migrate + 10 free + 6 blocked)** — zero live taggings, no migration, no dependency on H0: cats **4** (29 unused enums — the GA per-event question is a Calendar Events matter, not these), **23** (values already archived; the EMPTY field still rendered in 22 campaigns), **14**, **12**, **20**, **19**, **1**, **3**, **5**, **8**. ✅ **EXECUTED 2026-08-20** — see the wave-1 log below.
-> 3. **Retiring = archive the values AND `removeTagCategoryFromCampaign` per campaign.** Archiving alone only hides a value from the picker; the field keeps rendering. Started at **261 field×campaign enablements** across the 23 legacy fields; wave 1 pulled 42, leaving **219**. Per-campaign legacy counts went 9–13 → **7–10** (Test 10 → 6). Whether existing taggings vanish from the profile when their field leaves a campaign is STILL unverified — it does not arise for wave 1 (all zero-tagging) but must be tested before the six duplicated-metric fields come off.
+> 3. **Retiring = archive the values AND `removeTagCategoryFromCampaign` per campaign.** Archiving alone only hides a value from the picker; the field keeps rendering. Started at **261 field×campaign enablements** across the 23 legacy fields; wave 1 pulled 42, leaving **219**. Per-campaign legacy counts went 9–13 → **7–10** (Test 10 → 6). ~~Whether existing taggings vanish from the profile when their field leaves a campaign is STILL unverified~~ — **answered in wave 2 below: de-enabling HIDES taggings reversibly, it does not destroy them.** Final state after wave 3: **37**.
 
 ### Block H wave 1 — retire the 10 dead fields — ✅ EXECUTED 2026-08-20
 
@@ -462,7 +462,64 @@ taggings** — its only live ones were 6 in the Test campaign. Migration debt is
 >
 > **Cleared as a risk:** saved queries. All 37 non-temporary queries store tag **ids**, and only two touch legacy tags — `Test Events Filter` (Test, tag 40) and `Rob's Demo Filter` (campaign 10, tags 42/43). The 26 `Hot Prospects` queries use tag 75 and `Intro Phone Bank Search` uses tag 45, both id-stable. No organizer query breaks.
 >
-> **Also stale (Block I):** `master_load_qualifiers.sql:832–836` still emits OLD field-name label columns (`action_network_field`, `events_field`, `pb_field`, `first_event_field`, `mr_event_field`), carried through `deduplicated_names_to_load_bq_only.sql:167–171,362–366`. Labels only — no read path — but they are wrong names now.
+> **Also stale (Block I):** `master_load_qualifiers.sql:832–836` still emits OLD field-name label columns (`action_network_field`, `events_field`, `pb_field`, `first_event_field`, `mr_event_field`), carried through `deduplicated_names_to_load_bq_only.sql:167–171,362–366`. Labels only — no read path — but they are wrong names now. `updates_needed.sql` has the same disease in a louder place: its `field_group` labels and output column names (`event_participation_history_tag`, `state_online_actions_tag`, …) still carry the LEGACY field names at lines 270–406 and 538–616. Contents were cut over by Block G and the write targets are correct — verified empirically — but a reader would reasonably conclude the retired fields are still being written. Rename with the Block I pass.
+
+### Block H wave 3 — retire the six duplicated metrics — ✅ EXECUTED 2026-08-24
+
+The last mechanically-unblocked work. Cats **6** (Event Attendance History), **7** (Event
+Attendance Summary), **16** (Online Actions Past 6 Months), **18** (State Online Actions),
+**21** (National Online Actions), **28** (Storytelling) — **147 enablements**, all
+campaign-local, cats 6/7/16 in campaigns 1–25 and cats 18/21/28 in 2–25.
+
+**H0 convergence verified first**, on exactly the two tests the prereq named:
+- Date writes in the thousands, not 17/35 — 8/21 landed **18,576** on tag 101 and **18,558**
+  on tag 102, draining to 4–9/night by 8/23.
+- Deletes hitting 123/124, not 64/74 — every delete from 8/21 on is 123/124 (350–400 a
+  night), **zero** on 64/74 since 8/20.
+Also confirmed the six fields were already silent: last pipeline write 8/19 (the cutover
+night), plus two straggler delete waves on 8/20, then nothing.
+
+**Saved-query blocker cleared first.** Re-checked against current data rather than trusting
+the 8/20 count: still exactly two non-temporary queries touching wave-3 tags (the dozen
+other hits are `temporary = TRUE` session scratch). Repointed via `updateSavedQuery`,
+transforming the body JSON structurally — swap `tags[].id`, leave `tag_type`, `range_start`,
+`range_end` and operators untouched — and verified by an independent `getSavedQuery`
+read-back rather than the mutation's echo:
+- 142 `Test Events Filter` (Test): tag 40 → **101**
+- 195 `Rob's Demo Filter` (New York): tag 43 → **103**, tag 42 → **108**
+Types match 1:1 both times (Date→Date, Number→Number), checked via `getTagsByIds.tagType`
+before writing.
+
+**Execution.** Canary `removeTagCategoryFromCampaign(campaignId: 1, tagCategoryId: 6)` →
+read back 25→24 with campaign 1 absent → then the remaining 146, each verified from its own
+mutation response and each field re-read after its batch. **147/147, zero failures, all six
+at `associatedCampaignIds: []`.** Then 11 orphan values archived via `updateTag(archived:
+true)` — 44 as canary with an independent read-back before continuing — 40, 41, 44 (cat 6),
+42, 43 (cat 7), 60, 65, 73 (cat 16), 64 (cat 18), 74 (cat 21), 90 (cat 28). **11/11.**
+The work list was re-read live per field at execution time, so no write was driven by a
+stale enablement list.
+
+**Result: legacy 184 → 37 enablements; 18 of 23 legacy fields fully retired; new taxonomy
+untouched at 473** (total 510). **The `Participation` section is now empty and gone from
+staff view** — all ten of its fields were legacy (3/4/5/19 in wave 1, these six now) —
+joining `Expressed Volunteer Interest` and `Issues`. Three sections retired in total.
+
+Safety check on the de-enablement rule ("never de-enable a field the pipeline still reads"):
+`updates_needed` verified to hold **zero** rows targeting any retired field or the
+Participation section. Note this needs the `ccef_connections` path, not the BQ MCP — the
+view is heavy enough to time the MCP out, which returns an empty error that looks like a
+SQL bug and is not one.
+
+**All that remains is the 5 human-blocked migration fields (37 enablements):** Action Team
+Opt-In cat 10 (1 campaign, **still in active use — 92 taggings, up from 89 on 8/20**,
+growing until PA is pointed at `Local Groups > PA Action Team` 128) · Recent Activism cat 2
+(22) · Inactives Phonebank RSVP Date cat 13 (11) · `Million Conversations Prospect` cat 25
+(2, ⚠️ universal — retire by archiving + de-enabling, never by delete) · Nebraska Regional
+Group cat 17 (1).
+
+Rollback: `addTagCategoryToCampaign` per (campaign, cat) and `updateTag(archived: false)`
+per value. De-enabling only HIDES taggings (proven by wave 2's round-trip), so nothing here
+destroyed data.
 
 1. One-off script rewrites the ~120 live human taggings to the new homes: PA Action Team Opt-In (86) → `PA Action Team Member`; Volunteer Activity Interest (19) + Expressed Volunteer Interest (7) → `Interest: …` values; Issues (9) → `Issue: …`; NE Chapters (2) → `NE Group: …` (NE team confirms the District-8 triplets collapse). Old taggings are campaign-local → delete via API after re-stamping.
 2. D5 drops (Rob decided 2026-08-13; courtesy check done — owners Cheech Sorilla ×3 Recent Activism, Flose LaPierre + Franceska Edouard ×10 RSVP Dates, newest Nov 2025): ping or waive, then no migration — just archive.
