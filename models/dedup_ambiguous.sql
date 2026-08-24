@@ -98,14 +98,44 @@ primary_phones AS (
 
 -- All phones per entity: used to detect the shared-phone signal.
 -- We check every phone on each entity, not just the primary.
+--
+-- Placeholder phones are excluded here (2026-08-24). A fake number shared by
+-- strangers is not evidence of anything, but it pairs them anyway whenever the
+-- last names happen to match -- the 2026-08-24 review queue surfaced pairs held
+-- together by nothing but 970-999-9999 and 518-555-5555. Measured on the live
+-- table, among phones carried by 2+ entities: 38 numbers whose 7-digit local
+-- part is a single repeated digit (83 entity slots) and 25 in the fictional 555
+-- exchange (55 slots) -- one line pattern, xxx-555-5555, sits on 76 entities on
+-- its own. Real shared phones (family landlines) top out at 12 entities.
+-- Excluding these costs a weak signal on at most a handful of people and only
+-- ever suppresses REVIEW candidates -- it can never suppress a merge that the
+-- voterbase signal or dedup_candidates would have caught independently.
 all_ab_phones AS (
   SELECT
     owner_id AS entity_id,
-    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(number, r'^[+]1', ''), r'^[+]', ''), r'[^0-9]', '') AS phone_norm
-  FROM actionbuilder_cleaned.cln_actionbuilder__phone_numbers
-  WHERE owner_type = 'Entity'
-    AND status IN ('verified', 'user_added')
-    AND number IS NOT NULL
+    phone_norm
+  FROM (
+    SELECT
+      owner_id,
+      REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(number, r'^[+]1', ''), r'^[+]', ''), r'[^0-9]', '') AS phone_norm
+    FROM actionbuilder_cleaned.cln_actionbuilder__phone_numbers
+    WHERE owner_type = 'Entity'
+      AND status IN ('verified', 'user_added')
+      AND number IS NOT NULL
+  )
+  -- 10 digits is a precondition for the SUBSTR-based rules below to mean
+  -- anything. phone_pair_ids also asserts it; harmless overlap, deliberate.
+  WHERE LENGTH(phone_norm) = 10
+    -- Valid NANP: neither the area code nor the exchange may start with 0 or 1.
+    -- A number that fails this cannot be real, so it cannot be evidence.
+    AND REGEXP_CONTAINS(phone_norm, r'^[2-9][0-9]{2}[2-9][0-9]{6}$')
+    -- Local part is one digit repeated seven times (9999999, 5555555, ...).
+    -- RE2 has no backreferences, so this is done by deletion: strip every
+    -- occurrence of the first local digit and see whether anything survives.
+    AND LENGTH(REGEXP_REPLACE(SUBSTR(phone_norm, 4, 7), SUBSTR(phone_norm, 4, 1), '')) > 0
+    -- The 555 exchange is reserved for fiction and is pure junk in our data
+    -- (line numbers 5555 / 1212 / 1234 / 1111 dominate it).
+    AND SUBSTR(phone_norm, 4, 3) != '555'
 ),
 
 tag_counts AS (

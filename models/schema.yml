@@ -360,6 +360,11 @@ models:
                                      be the same person registered twice, or family
                                      members. Review conservatively; flag household
                                      phones as KEEP_BOTH.
+                                     Placeholder phones are excluded from this signal
+                                     (2026-08-24): invalid NANP numbers, a local part
+                                     that is one repeated digit (999-9999, 555-5555),
+                                     and the whole fictional 555 exchange. See the
+                                     all_ab_phones CTE for the measurements.
 
       Pairs with EXACTLY the same normalized fn+ln go directly to dedup_candidates
       (voterbase_id_match tier) and do not appear here.
