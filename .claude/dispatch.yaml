@@ -1,0 +1,192 @@
+# =============================================================================
+# DISPATCH CONTRACT — actionbuilder-sync
+# Format: templates/dispatch.yaml v1 (meta repo) · Law: docs/dispatch_treaty.md
+# =============================================================================
+# RETRO-CONTRACT. This describes a loop that has run in production since
+# 2026-07-30, not a proposal. Written 2026-08-25 against the live runner
+# (scripts/run_weekly_dedup.ps1), the runbook skill, the write path
+# (scripts/agent_resolve_dedup.py), and five run logs (07-30 .. 08-24).
+# Rollout step zero, Dispatch Treaty §12 — no new capability is granted here.
+#
+# Scope note: this project has four other classified task types (on-demand
+# sync ops, AB UI-automation fixes, nightly sync monitoring, tag-taxonomy
+# redesign — see docs/dispatch_classification.md in the meta repo). They stay
+# uncontracted until their grants are individually proposed. Absence is
+# deliberate, per treaty §2.5.
+# =============================================================================
+
+version: 1
+revision: 1
+project: actionbuilder-sync
+owner: rkerth-cc
+last_verified: 2026-08-25
+
+notes:
+  - "Work runs from the project root against the project venv at .venv."
+  - "logs/ is gitignored and must stay that way — dedup working files carry
+     supporter names, addresses, and phones. See the PII clause on
+     evidence_of_done below; it is load-bearing, not boilerplate."
+  - "Trust sync_log, not HTTP status codes. This project has documented cases
+     of a 200 wrapping a real failure."
+
+task_types:
+
+  - id: weekly-dedup-judgment
+    title: Weekly dedup resolution pass
+    class: loop
+    callable_by: human
+    summary: >
+      Judges new ActionBuilder duplicate-candidate pairs and writes
+      MERGE / KEEP_BOTH decisions to dedup_resolutions, leaving anything
+      uncertain in the queue for Rob. Decides only — never executes a removal.
+    tags: [dedup, duplicates, actionbuilder, weekly]
+    examples:
+      - "run this week's dedup pass"
+      - "resolve the new dedup_unresolved pairs"
+
+    runbook: .claude/skills/weekly-dedup-resolve/SKILL.md
+
+    # --- loop-class keys ----------------------------------------------------
+    schedule: >
+      Mondays 07:23 America/New_York — Windows Task Scheduler, task
+      "ActionBuilder Sync - weekly dedup agent", via scripts/run_weekly_dedup.ps1.
+      Catch-up fires late when the machine was asleep at the scheduled time:
+      the 2026-08-24 run started 12:45. A late fire is normal, not a fault;
+      a MISSING fire is a fault and is currently invisible (see heartbeat).
+    detection_surface: >
+      actionbuilder_sync.dedup_unresolved (BigQuery), read by
+      `python scripts/agent_resolve_dedup.py evidence`. Pairs arrive from two
+      signals — voterbase_id_diff_name (same voter-file entry, different names)
+      and shared_phone_same_lastname. Exact-name twins are auto-handled
+      upstream and never reach this queue, so every pair here needs judgment.
+    heartbeat: >
+      logs/weekly_dedup_<YYYY-MM-DD>.log — one file per fire, 90-day retention.
+      An empty queue reports "queue empty" and exits 0: that is a healthy quiet
+      run and must stay distinguishable from a dead one. GAP ON RECORD: nothing
+      currently watches this file, so a fire that never happened is invisible
+      today. Under law the ledger DISPATCH row becomes the real heartbeat and
+      this log becomes the evidence_uri target.
+
+    # No parameters: the queue IS the input. Declared empty so the validator's
+    # scheduled-task-type check (treaty §5 — required params without defaults
+    # cannot be filled by a fire that can't interview) passes honestly.
+    parameters: []
+
+    # No ask-rules: origin=scheduled cannot interview (treaty §5), so every
+    # condition that would otherwise be a question is an abort or an escalation
+    # below. The volume ceiling is the important one.
+    ask_rules: []
+
+    preconditions:
+      - "BigQuery credentials resolve for proj-tmc-mem-com (ccef-connections)."
+      - "actionbuilder_sync.dedup_unresolved and .dedup_resolutions both exist."
+      - "Local-only: runs on Rob's machine under Task Scheduler; there is no
+         cloud copy of this job."
+
+    writes:
+      - system: BigQuery
+        operation: "INSERT rows into actionbuilder_sync.dedup_resolutions via
+                    `python scripts/agent_resolve_dedup.py write --file <decisions.json>`"
+        reversible: true
+        idempotent: true
+        destructive: false
+        notes: >
+          A resolution row is a RECORDED JUDGMENT, not an executed change —
+          nothing in ActionBuilder moves because this row exists. Reversible by
+          superseding the row (resolved_by is stamped
+          'ai:claude-fable-5 (weekly local agent)', resolved_at is UTC).
+          Idempotency mechanism, stated precisely because it matters on retry:
+          cmd_write filters the decisions file against the LIVE dedup_unresolved
+          queue and skips any pair no longer in it, with a warning — it does NOT
+          anti-join dedup_resolutions itself. So a retry is safe once a resolved
+          pair has dropped out of the view; if the view lags a partial streaming
+          insert, a duplicate resolution row is possible. Mismatched entity ids
+          for a pair abort the whole write (nothing is written).
+      - system: Local filesystem
+        operation: "Write logs/dedup_decisions_<YYYY-MM-DD>.json (the decisions array)"
+        reversible: true
+        idempotent: true
+        destructive: false
+        notes: "Gitignored. Overwritten per run date. Carries pair ids and
+                reasons; reasons may name individuals — never leaves the machine."
+
+    guards:
+      - "Refuse to write any decision whose confidence is not high or medium —
+         low-confidence pairs are OMITTED so they stay in the queue for Rob.
+         DEFER is not a writable decision; the write script rejects it."
+      - "Abort the entire write if a pair's entity ids do not match the live
+         queue — a stale decisions file must never be applied to shifted pairs."
+      - "Volume ceiling: more than 40 pairs in the queue means an upstream bulk
+         event, not organic drift. Resolve NOTHING and stop (see escalation).
+         Normal weekly volume is 0–15."
+
+    abort:
+      max_minutes: 30
+      max_actions: 120
+      # Observed: the 2026-08-24 run judged 22 pairs — an unusually heavy week —
+      # in 3m48s. 30 minutes is ~8x the heaviest observed run: real headroom for
+      # a hard week, still short enough that the treaty zombie rule
+      # (max_minutes x 2 = 60 min with no terminal state) fires the same morning.
+
+    evidence_of_done:
+      - "Pairs seen / written / left-in-queue counts, with the merge vs
+         keep-both split."
+      - "One line per left-in-queue pair giving the pair_id and WHY it was left
+         (this is the queue Rob works)."
+      - "Path to logs/dedup_decisions_<date>.json and the run log."
+      - "Anomalies: volume outside 0–15, staff or suppressed records involved,
+         contamination patterns worth a UI fix."
+      # PII CLAUSE (treaty §7 — the ledger stays commit-clean). The run report
+      # that leaves this machine carries COUNTS, PAIR_IDS, and POINTERS only.
+      # Supporter names, emails, addresses, and phones stay in the gitignored
+      # local log. This is a real change from current practice: today's run
+      # summaries name individuals inline (see the 2026-08-24 log). Under law
+      # that prose stays local and the ledger gets the counts plus the log path.
+
+    verify: semantic
+    # Tier M alone cannot see the failure that matters here. A run can write 20
+    # schema-valid resolutions that are all WRONG — merging a couple, or
+    # merging a TargetSmart voterbase collision — and pass every mechanical
+    # check. Tier S grades a sample of decisions against the rubric's
+    # households-first and never-merge rules, with no builder context.
+
+    error_budget:
+      window: 12
+      min_runs_floor: 5
+      pass_threshold: 0.9
+      # Window 12, not the treaty default 20: this fires weekly, so 20 runs is
+      # five months and the budget would never say anything actionable inside a
+      # cycle. 12 is a quarter.
+
+    ticketing:
+      asana_project: "Dispatch Ops"
+      # No campaign-mapped Asana project for AB maintenance work; this is infra
+      # and lands in the shared store (treaty §4).
+
+    residual_human_steps:
+      - "Execute the merges. MERGE decisions pool into dedup_candidates
+         (resolved_merge tier) and run in the separate human-supervised removal
+         pass — this task type never executes them (Rob)."
+      - "Work the left-in-queue pairs: the ones the agent deliberately declined
+         are a judgment queue, not a backlog of failures (Rob)."
+      - "Read the anomalies block. The 2026-08-24 run surfaced a bulk-insert
+         wave (14 of 22 twins created 2026-08-18) that no dashboard would have
+         flagged (Rob)."
+
+    escalation:
+      - "More than 40 pairs in the queue: report 'ABORT: N pairs — likely an
+         upstream bulk event; needs human review' and stop without resolving.
+         Do not partially resolve a suspicious queue."
+      - "Suppressed or staff records involved in a pair: leave it in the queue
+         and say so — never merge one."
+      - "Suspected TargetSmart voterbase collision (different names, towns,
+         addresses AND phones on one voterbase_id): leave in queue with the
+         evidence. These are upstream data faults, not duplicates."
+
+    do_not_touch:
+      - "Removal operations — remove_records and every other AB delete path.
+         ActionBuilder hard deletes are PERMANENT and never replicate back.
+         This is the single most important line in this contract."
+      - "The ActionBuilder UI automation session (scripts/ab_ui_session.py) —
+         a different task type with its own capture-replay guardrails."
+      - "Tag taxonomy: explicitly do NOT execute without Rob's sign-off."

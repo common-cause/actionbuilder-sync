@@ -9,5 +9,6 @@ __pycache__/
 *.pyc
 .claude/*
 !.claude/settings.json
+!.claude/dispatch.yaml
 /tmp/
 inbox/
