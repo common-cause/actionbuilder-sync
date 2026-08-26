@@ -76,7 +76,14 @@ def main() -> int:
           (SELECT COUNTIF(status != 'ok') FROM actionbuilder_sync.sync_log
             WHERE executed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR))
                                                                        AS errors_24h,
-          (SELECT COUNT(*) FROM actionbuilder_sync.phantom_tag_writes) AS phantom_rows
+          (SELECT COUNT(*) FROM actionbuilder_sync.phantom_tag_writes) AS phantom_rows,
+          -- The detector has a 7-day replication grace window, so a hit NEVER
+          -- describes last night. Surface the write dates or the reader will go
+          -- audit today's activation for a fault that is at least a week old.
+          (SELECT CAST(MIN(first_write) AS STRING)
+             FROM actionbuilder_sync.phantom_tag_writes)              AS phantom_first,
+          (SELECT CAST(MAX(last_write) AS STRING)
+             FROM actionbuilder_sync.phantom_tag_writes)              AS phantom_last
     """))[0]
 
     views_age = row["views_age_hours"]
@@ -111,7 +118,10 @@ def main() -> int:
     if phantom:
         problems.append(
             f"phantom_tag_writes has {phantom} rows - tag writes are returning 200 "
-            f"and silently dropping. Check per-campaign value activation."
+            f"and silently dropping. Affected writes are dated "
+            f"{row['phantom_first']} to {row['phantom_last']}: the model has a 7-day "
+            f"grace window, so this is NOT last night's run. Check per-campaign value "
+            f"activation as it stood on those dates, not today's."
         )
 
     print(f"views rebuilt : {views_age}h ago")
