@@ -7,8 +7,19 @@ logs/
 .venv/
 __pycache__/
 *.pyc
+# Blanket-ignore .claude/, then re-include the parts that are project code rather than
+# local operator state. The blanket pattern is a silent-drop hazard: a new skill, command
+# or doc dropped in here is invisible to git and nothing complains (the dispatch
+# retro-contract hit exactly this). Directory negations below keep future additions
+# visible -- `.claude/*` only matches one level deep, so un-ignoring the directory is
+# enough to let everything under it through.
 .claude/*
 !.claude/settings.json
 !.claude/dispatch.yaml
+!.claude/CLAUDE.md
+!.claude/commands/
+!.claude/skills/
+# Deliberately still ignored: settings.local.json (personal overrides), handoff.md
+# (ephemeral session state), worktrees/ (agent scratch checkouts).
 /tmp/
 inbox/

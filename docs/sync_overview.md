@@ -56,34 +56,45 @@ The sync reads from `actionbuilder_sync.updates_needed`. Required structure:
 
 This is the part most easily misread from the SQL. In `updates_needed`, each field's `updates_to_apply` row carries a `field_group` string. The final SELECT uses `field_group` in `CASE` expressions to route that row's `sync_string` into exactly **one** named output column (and the removal IDs into its `*_remove` partner). The output column — not the field name — is what `sync.py` reads.
 
-`TAG_COLS` in `scripts/sync.py` (the live set as of 2026-06):
+`TAG_COLS` in `scripts/sync.py` (the live set as of 2026-08-25 — 11 columns):
 
 ```
-event_participation_history_tag      online_actions_past_6_months_tag    ofp_tag
-event_participation_summary_tag      state_online_actions_tag
-national_online_actions_tag          engagement_tag
+event_participation_history_tag      state_online_actions_tag        million_conversations_role_tag
+event_participation_summary_tag      national_online_actions_tag     million_conversations_activity_tag
+online_actions_past_6_months_tag     engagement_tag                  million_conversations_prospect_tag
+ofp_tag                                                              ep_shift_tag
 ```
 
 Consequences when adding a tag:
 - **Reuse an existing column** (give your row a `field_group` that maps to one already in `TAG_COLS`) → **no `sync.py` change needed.** This is the **NewMode precedent**: "NewMode Actions" uses `field_group = 'Online Actions Past 6 Months'` and rides the existing `online_actions_past_6_months_tag` column. The actual AB tag taxonomy is set by the sync string, not the column name, so reuse is clean.
 - **New column** → you must add it to **both** the `updates_needed` final SELECT (a new `field_group` → `_tag`/`_tag_remove` CASE pair) **and** `TAG_COLS` in `sync.py`.
-- The columns differ in removal behavior: most do add-with-removal (update replaces value); the `ofp_tag` and the 1MC columns are additive-only (removal always NULL). Pick a column whose behavior matches your tag.
-- ⚠️ The 1MC `million_conversations_*_tag` columns are emitted by `updates_needed` but are **not yet in `TAG_COLS`** — they are staged ahead of the `sync.py` wiring (1MC rollout in progress). They are not written by `update_records` today.
+- The columns differ in removal behavior. After the Blocks A–H taxonomy migration most synced fields are **universal** (network-level tag objects), and a universal tagging is **API-undeletable** — so their removal columns are permanently NULL and the value is replaced on write instead. Only the three campaign-local `Engagement` groups still emit true removals (`state_online_actions_tag`, `national_online_actions_tag`, `engagement_tag`), where rotation off a top-performer list needs a real delete. Pick a column whose behavior matches your tag, and see `docs/taxonomy_migration_runbook.md` for which fields are universal.
 
 ### Sync String Format
 
 Tag values use a 4-part `:|:`-delimited string:
 
 ```
-Section:|:Category:|:Field:|:response_type:value
+Section:|:Field:|:Response:|:response_type:value
 ```
 
-Examples:
+Segment 2 is the AB **field** (a `tag_category`) and segment 3 is the **response** (a `tag`)
+— the same distinction that makes GraphQL `updateTagCategory` rename a field while
+`updateTag` renames a value. Editing these positionally matters: a field and its response
+are often *not* the same string (see the 1MC example below), so never fix one by
+find/replace across the line.
+
+Examples (current taxonomy, post-Block-H):
 ```
-Participation:|:Event Attendance Summary:|:Events Attended Past 6 Months:|:number_response:12
-Participation:|:Event Attendance History:|:First Event Attended:|:date_response:2024-03-15
-Participation:|:State Online Actions:|:Top State Action Taker:|:standard_response:Top State Action Taker
+Activity:|:Events Attended (Past 6 Months):|:Events Attended (Past 6 Months):|:number_response:12
+Activity:|:First Event Attended:|:First Event Attended:|:date_response:2024-03-15
+Engagement:|:Top Performers:|:Top State Action Taker:|:standard_response:Top State Action Taker
+1 Million Conversations:|:Total Conversations:|:1MC Total Conversations:|:number_response:70
 ```
+
+> The pre-Block-G `Participation:|:...` section that earlier versions of this doc used in
+> these examples **no longer exists** — Block H retired it entirely, along with 17 other
+> legacy fields. `docs/taxonomy_migration_runbook.md` has the full old→new mapping.
 
 **Response types** (the "fourth layer"):
 - `number_response:` — numeric values
